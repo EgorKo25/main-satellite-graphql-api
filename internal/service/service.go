@@ -1,4 +1,3 @@
-// Package service implements atomic business operations on Main and its satellite.
 package service
 
 import (
@@ -12,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type Service struct{ store *postgres.Store }
-
 func New(store *postgres.Store) *Service { return &Service{store: store} }
+
+type Service struct{ store *postgres.Store }
 
 func (s *Service) List(ctx context.Context, input domain.ListInput) ([]*domain.Main, error) {
 	if err := domain.ValidateList(input); err != nil {
@@ -166,7 +165,6 @@ func internal(operation string, err error) error {
 }
 
 func rollback(tx pgx.Tx) {
-	// A canceled request must still release its connection and uncommitted locks.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = tx.Rollback(ctx)

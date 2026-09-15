@@ -104,8 +104,6 @@ func TestValidateUpdate(t *testing.T) {
 }
 
 func TestPatchPresenceIsIndependentOfValue(t *testing.T) {
-	// A non-nil value with Set=false is still absent; descriptions explicitly set
-	// to nil count as an update and clear SQL NULL in the write path.
 	input := UpdateInput{ID: 1, Title: Patch[string]{Value: ptr("ignored")}}
 	assertBadInput(t, ValidateUpdate(input))
 	input.Satellite = Patch[SatellitePatch]{Set: true, Value: &SatellitePatch{

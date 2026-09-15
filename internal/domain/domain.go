@@ -1,4 +1,3 @@
-// Package domain defines the Main aggregate and its input validation.
 package domain
 
 import (
@@ -44,7 +43,6 @@ type Satellite struct {
 	DeletedAt   *time.Time
 }
 
-// Patch preserves all three input states: missing, explicit null, and a value.
 type Patch[T any] struct {
 	Set   bool
 	Value *T
@@ -83,7 +81,6 @@ const (
 	InternalServerError   = "INTERNAL_SERVER_ERROR"
 )
 
-// Error separates a safe client message from the internal cause, which is logged.
 type Error struct {
 	Code    string
 	Message string
@@ -103,7 +100,6 @@ func ErrorCode(err error) string {
 
 func BadInput(message string) error { return &Error{Code: BadUserInput, Message: message} }
 
-// ParseID accepts decimal positive BIGINT identifiers without signs or whitespace.
 func ParseID(value string) (int64, error) {
 	if value == "" {
 		return 0, BadInput("id must be a positive BIGINT")
