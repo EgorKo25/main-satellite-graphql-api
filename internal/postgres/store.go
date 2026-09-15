@@ -1,4 +1,3 @@
-// Package postgres contains parameterized SQL for the Main aggregate.
 package postgres
 
 import (
@@ -12,16 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store struct{ pool *pgxpool.Pool }
-
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+type Store struct{ pool *pgxpool.Pool }
 
 func (s *Store) Begin(ctx context.Context) (pgx.Tx, error) {
 	return s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 }
 
-// The joins also expose unexpected satellites, allowing a corrupted mandatory
-// relationship to fail explicitly instead of returning a plausible empty object.
 const aggregateSelect = `SELECT
     m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
     t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
@@ -135,8 +132,6 @@ func utcPointer(value *time.Time) *time.Time {
 	return &converted
 }
 
-// LockMain must be called before any satellite lock. It deliberately includes
-// deleted rows, so the caller checks their status after acquiring the lock.
 func (s *Store) LockMain(ctx context.Context, tx pgx.Tx, id int64) (*domain.Main, error) {
 	var main domain.Main
 	err := tx.QueryRow(ctx, `SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
@@ -149,7 +144,6 @@ FROM main WHERE id = $1 FOR UPDATE`, id).Scan(
 	return &main, nil
 }
 
-// LockSatellite obtains the second lock, then verifies the complete aggregate.
 func (s *Store) LockSatellite(ctx context.Context, tx pgx.Tx, main *domain.Main) (*domain.Main, error) {
 	var query string
 	switch main.SubObj {
