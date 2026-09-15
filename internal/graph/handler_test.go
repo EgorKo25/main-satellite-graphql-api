@@ -48,8 +48,15 @@ func (s *serviceSpy) Create(_ context.Context, input domain.CreateInput) (*domai
 	}
 	value := sampleMain(input.Kind)
 	value.Title = input.Title
-	value.Satellite.Description = input.Description
-	value.Satellite.Type = input.ChairType
+	switch satellite := value.Satellite.(type) {
+	case *domain.Tool:
+		satellite.Description1 = input.Description
+	case *domain.Table:
+		satellite.Description2 = input.Description
+	case *domain.Chair:
+		satellite.Description3 = input.Description
+		satellite.Type = input.ChairType
+	}
 	return value, nil
 }
 
@@ -72,10 +79,20 @@ func (s *serviceSpy) Delete(_ context.Context, id int64) (int64, error) {
 
 func sampleMain(kind domain.Kind) *domain.Main {
 	timestamp := time.Date(2026, 9, 15, 13, 42, 10, 123000, time.FixedZone("MSK", 3*60*60))
+	common := domain.Satellite{
+		ID: 2, MainID: 9223372036854775807, CreatedAt: timestamp, UpdatedAt: timestamp,
+	}
+	var satellite domain.SubObject
+	switch kind {
+	case domain.Tools:
+		satellite = &domain.Tool{Satellite: common}
+	case domain.Tables:
+		satellite = &domain.Table{Satellite: common}
+	case domain.Chairs:
+		satellite = &domain.Chair{Satellite: common, Type: domain.ABC}
+	}
 	return &domain.Main{ID: 9223372036854775807, Title: "sample", SubID: 2, SubObj: kind,
-		CreatedAt: timestamp, UpdatedAt: timestamp, Satellite: domain.Satellite{
-			ID: 2, MainID: 9223372036854775807, Kind: kind, CreatedAt: timestamp, UpdatedAt: timestamp,
-		}}
+		CreatedAt: timestamp, UpdatedAt: timestamp, Satellite: satellite}
 }
 
 type httpResult struct {

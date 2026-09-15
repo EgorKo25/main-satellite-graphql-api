@@ -13,17 +13,16 @@ func outputMain(value *domain.Main) *model.Main {
 	if value == nil {
 		return nil
 	}
-	satellite := value.Satellite
 	var output model.Satellite
-	switch satellite.Kind {
-	case domain.Tools:
-		output = &model.Tool{ID: strconv.FormatInt(satellite.ID, 10), Description1: satellite.Description,
+	switch satellite := value.Satellite.(type) {
+	case *domain.Tool:
+		output = &model.Tool{ID: strconv.FormatInt(satellite.ID, 10), Description1: satellite.Description1,
 			CreatedAt: satellite.CreatedAt.UTC(), UpdatedAt: satellite.UpdatedAt.UTC(), DeletedAt: utcPointer(satellite.DeletedAt)}
-	case domain.Tables:
-		output = &model.Table{ID: strconv.FormatInt(satellite.ID, 10), Description2: satellite.Description,
+	case *domain.Table:
+		output = &model.Table{ID: strconv.FormatInt(satellite.ID, 10), Description2: satellite.Description2,
 			CreatedAt: satellite.CreatedAt.UTC(), UpdatedAt: satellite.UpdatedAt.UTC(), DeletedAt: utcPointer(satellite.DeletedAt)}
-	case domain.Chairs:
-		output = &model.Chair{ID: strconv.FormatInt(satellite.ID, 10), Description3: satellite.Description, Type: model.ChairType(satellite.Type),
+	case *domain.Chair:
+		output = &model.Chair{ID: strconv.FormatInt(satellite.ID, 10), Description3: satellite.Description3, Type: model.ChairType(satellite.Type),
 			CreatedAt: satellite.CreatedAt.UTC(), UpdatedAt: satellite.UpdatedAt.UTC(), DeletedAt: utcPointer(satellite.DeletedAt)}
 	}
 	return &model.Main{ID: strconv.FormatInt(value.ID, 10), Title: value.Title, Satellite: output,

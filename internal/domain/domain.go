@@ -26,22 +26,45 @@ type Main struct {
 	Title     string
 	SubID     int64
 	SubObj    Kind
-	Satellite Satellite
+	Satellite SubObject
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt *time.Time
 }
 
-type Satellite struct {
-	ID          int64
-	MainID      int64
-	Kind        Kind
-	Description *string
-	Type        ChairType
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   *time.Time
+type SubObject interface {
+	isSatellite()
 }
+
+type Satellite struct {
+	ID        int64
+	MainID    int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time
+}
+
+type Tool struct {
+	Satellite
+	Description1 *string
+}
+
+func (*Tool) isSatellite() {}
+
+type Table struct {
+	Satellite
+	Description2 *string
+}
+
+func (*Table) isSatellite() {}
+
+type Chair struct {
+	Satellite
+	Description3 *string
+	Type         ChairType
+}
+
+func (*Chair) isSatellite() {}
 
 type Patch[T any] struct {
 	Set   bool
