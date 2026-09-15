@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,12 +25,23 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/service"
-	"github.com/EgorKo25/main-satellite-graphql-api/migrations"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
 
 type object = map[string]any
+
+const migrationsDir = "../../migrations"
+
+func TestMain(m *testing.M) {
+	if err := goose.SetDialect("postgres"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
 
 const fields = `id title createdAt updatedAt deletedAt satellite {
  __typename
@@ -60,7 +72,7 @@ type fixture struct {
 	pool   *pgxpool.Pool
 	server *httptest.Server
 	trace  *traceCounter
-	dsn    string
+	db     *sql.DB
 }
 
 // Every fixture owns a freshly created database. The supplied admin database is
@@ -113,7 +125,16 @@ func setup(t *testing.T) *fixture {
 	if cfg.ConnConfig.Database != name {
 		t.Fatal("test DSN must target the owned database")
 	}
-	if err := migrations.Up(ctx, testDSN); err != nil {
+	db, err := sql.Open("pgx", testDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close migration connection: %v", err)
+		}
+	})
+	if err := goose.UpContext(ctx, db, migrationsDir); err != nil {
 		t.Fatal(err)
 	}
 	trace := new(traceCounter)
@@ -126,7 +147,7 @@ func setup(t *testing.T) *fixture {
 	t.Cleanup(pool.Close)
 	server := httptest.NewServer(graph.NewHandler(service.New(postgres.New(pool)), slog.New(slog.NewTextHandler(io.Discard, nil))))
 	t.Cleanup(server.Close)
-	return &fixture{pool: pool, server: server, trace: trace, dsn: testDSN}
+	return &fixture{pool: pool, server: server, trace: trace, db: db}
 }
 
 func (f *fixture) request(query string, variables object) (response, error) {
@@ -662,10 +683,10 @@ func TestConcurrentWrites(t *testing.T) {
 func TestMigrationsAndDatabaseConstraints(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
-	if err := migrations.Up(ctx, f.dsn); err != nil {
+	if err := goose.UpContext(ctx, f.db, migrationsDir); err != nil {
 		t.Fatalf("repeat up: %v", err)
 	}
-	if err := migrations.Down(ctx, f.dsn); err != nil {
+	if err := goose.DownContext(ctx, f.db, migrationsDir); err != nil {
 		t.Fatal(err)
 	}
 	var table *string
@@ -675,7 +696,7 @@ func TestMigrationsAndDatabaseConstraints(t *testing.T) {
 	if table != nil {
 		t.Fatal("down left main table")
 	}
-	if err := migrations.Up(ctx, f.dsn); err != nil {
+	if err := goose.UpContext(ctx, f.db, migrationsDir); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := f.pool.Query(ctx, `SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name`)
