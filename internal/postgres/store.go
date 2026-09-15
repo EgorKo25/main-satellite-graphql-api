@@ -100,16 +100,21 @@ func scanAggregate(row pgx.Row) (*domain.Main, error) {
 		!equalNullableTime(main.DeletedAt, selected.deletedAt) {
 		return nil, fmt.Errorf("Main %d has an inconsistent satellite relationship", main.ID)
 	}
-	main.Satellite = domain.Satellite{
-		ID: *selected.id, MainID: *selected.mainID, Kind: main.SubObj,
-		Description: selected.description, CreatedAt: selected.createdAt.UTC(),
+	satellite := domain.Satellite{
+		ID: *selected.id, MainID: *selected.mainID,
+		CreatedAt: selected.createdAt.UTC(),
 		UpdatedAt: selected.updatedAt.UTC(), DeletedAt: utcPointer(selected.deletedAt),
 	}
-	if main.SubObj == domain.Chairs {
+	switch main.SubObj {
+	case domain.Tools:
+		main.Satellite = &domain.Tool{Satellite: satellite, Description1: selected.description}
+	case domain.Tables:
+		main.Satellite = &domain.Table{Satellite: satellite, Description2: selected.description}
+	case domain.Chairs:
 		if selected.typeName == nil || (*selected.typeName != string(domain.ABC) && *selected.typeName != string(domain.CDE)) {
 			return nil, fmt.Errorf("Main %d has an invalid chair type", main.ID)
 		}
-		main.Satellite.Type = domain.ChairType(*selected.typeName)
+		main.Satellite = &domain.Chair{Satellite: satellite, Description3: selected.description, Type: domain.ChairType(*selected.typeName)}
 	}
 	main.CreatedAt = main.CreatedAt.UTC()
 	main.UpdatedAt = main.UpdatedAt.UTC()
@@ -216,19 +221,21 @@ func (s *Store) UpdateMain(ctx context.Context, tx pgx.Tx, main *domain.Main, no
 	return exactlyOne(tag, err)
 }
 
-func (s *Store) UpdateSatellite(ctx context.Context, tx pgx.Tx, satellite domain.Satellite, now time.Time) error {
+func (s *Store) UpdateSatellite(ctx context.Context, tx pgx.Tx, satellite domain.SubObject, now time.Time) error {
 	var query string
-	args := []any{satellite.ID, satellite.MainID, satellite.Description, now}
-	switch satellite.Kind {
-	case domain.Tools:
+	var args []any
+	switch satellite := satellite.(type) {
+	case *domain.Tool:
 		query = `UPDATE tools SET description1 = $3, update_at = $4 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`
-	case domain.Tables:
+		args = []any{satellite.ID, satellite.MainID, satellite.Description1, now}
+	case *domain.Table:
 		query = `UPDATE tables SET description2 = $3, update_at = $4 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`
-	case domain.Chairs:
+		args = []any{satellite.ID, satellite.MainID, satellite.Description2, now}
+	case *domain.Chair:
 		query = `UPDATE chairs SET description3 = $3, update_at = $4, type = $5 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`
-		args = append(args, satellite.Type)
+		args = []any{satellite.ID, satellite.MainID, satellite.Description3, now, satellite.Type}
 	default:
-		return fmt.Errorf("invalid satellite kind %q", satellite.Kind)
+		return fmt.Errorf("invalid satellite type %T", satellite)
 	}
 	tag, err := tx.Exec(ctx, query, args...)
 	return exactlyOne(tag, err)
@@ -239,19 +246,23 @@ func (s *Store) DeleteMain(ctx context.Context, tx pgx.Tx, id int64, now time.Ti
 	return exactlyOne(tag, err)
 }
 
-func (s *Store) DeleteSatellite(ctx context.Context, tx pgx.Tx, satellite domain.Satellite, now time.Time) error {
+func (s *Store) DeleteSatellite(ctx context.Context, tx pgx.Tx, satellite domain.SubObject, now time.Time) error {
 	var query string
-	switch satellite.Kind {
-	case domain.Tools:
+	var args []any
+	switch satellite := satellite.(type) {
+	case *domain.Tool:
 		query = `UPDATE tools SET deleted_at = $3, update_at = $3 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`
-	case domain.Tables:
+		args = []any{satellite.ID, satellite.MainID, now}
+	case *domain.Table:
 		query = `UPDATE tables SET deleted_at = $3, update_at = $3 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`
-	case domain.Chairs:
+		args = []any{satellite.ID, satellite.MainID, now}
+	case *domain.Chair:
 		query = `UPDATE chairs SET deleted_at = $3, update_at = $3 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`
+		args = []any{satellite.ID, satellite.MainID, now}
 	default:
-		return fmt.Errorf("invalid satellite kind %q", satellite.Kind)
+		return fmt.Errorf("invalid satellite type %T", satellite)
 	}
-	tag, err := tx.Exec(ctx, query, satellite.ID, satellite.MainID, now)
+	tag, err := tx.Exec(ctx, query, args...)
 	return exactlyOne(tag, err)
 }
 

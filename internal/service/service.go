@@ -81,11 +81,24 @@ func (s *Service) Update(ctx context.Context, input domain.UpdateInput) (*domain
 	}
 	if input.Satellite.Set {
 		patch := input.Satellite.Value
-		if patch.Description.Set {
-			main.Satellite.Description = patch.Description.Value
-		}
-		if patch.Type.Set {
-			main.Satellite.Type = *patch.Type.Value
+		switch satellite := main.Satellite.(type) {
+		case *domain.Tool:
+			if patch.Description.Set {
+				satellite.Description1 = patch.Description.Value
+			}
+		case *domain.Table:
+			if patch.Description.Set {
+				satellite.Description2 = patch.Description.Value
+			}
+		case *domain.Chair:
+			if patch.Description.Set {
+				satellite.Description3 = patch.Description.Value
+			}
+			if patch.Type.Set {
+				satellite.Type = *patch.Type.Value
+			}
+		default:
+			return nil, internal("update satellite", fmt.Errorf("invalid satellite type %T", satellite))
 		}
 	}
 	now, err := s.store.Now(ctx, tx)
