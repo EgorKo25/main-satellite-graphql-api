@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,75 +14,19 @@ import (
 	"time"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/service"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
-
-type serviceSpy struct {
-	calls      int
-	create     domain.CreateInput
-	update     domain.UpdateInput
-	list       domain.ListInput
-	err        error
-	panicValue any
-}
-
-func (s *serviceSpy) List(_ context.Context, input domain.ListInput) ([]*domain.Main, error) {
-	s.calls++
-	s.list = input
-	if s.panicValue != nil {
-		panic(s.panicValue)
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-	return []*domain.Main{}, domain.ValidateList(input)
-}
-
-func (s *serviceSpy) Create(_ context.Context, input domain.CreateInput) (*domain.Main, error) {
-	s.calls++
-	s.create = input
-	if s.err != nil {
-		return nil, s.err
-	}
-	if err := domain.ValidateCreate(input); err != nil {
-		return nil, err
-	}
-	value := sampleMain(input.Kind)
-	value.Title = input.Title
-	switch satellite := value.Satellite.(type) {
-	case *domain.Tool:
-		satellite.Description1 = input.Description
-	case *domain.Table:
-		satellite.Description2 = input.Description
-	case *domain.Chair:
-		satellite.Description3 = input.Description
-		satellite.Type = input.ChairType
-	}
-	return value, nil
-}
-
-func (s *serviceSpy) Update(_ context.Context, input domain.UpdateInput) (*domain.Main, error) {
-	s.calls++
-	s.update = input
-	if s.err != nil {
-		return nil, s.err
-	}
-	if err := domain.ValidateUpdate(input); err != nil {
-		return nil, err
-	}
-	return sampleMain(domain.Tools), nil
-}
-
-func (s *serviceSpy) Delete(_ context.Context, id int64) (int64, error) {
-	s.calls++
-	return id, s.err
-}
 
 func sampleMain(kind domain.Kind) *domain.Main {
 	timestamp := time.Date(2026, 9, 15, 13, 42, 10, 123000, time.FixedZone("MSK", 3*60*60))
 	common := domain.Satellite{
 		ID: 2, MainID: 9223372036854775807, CreatedAt: timestamp, UpdatedAt: timestamp,
 	}
+
 	var satellite domain.SubObject
+
 	switch kind {
 	case domain.Tools:
 		satellite = &domain.Tool{Satellite: common}
@@ -91,6 +35,7 @@ func sampleMain(kind domain.Kind) *domain.Main {
 	case domain.Chairs:
 		satellite = &domain.Chair{Satellite: common, Type: domain.ABC}
 	}
+
 	return &domain.Main{ID: 9223372036854775807, Title: "sample", SubID: 2, SubObj: kind,
 		CreatedAt: timestamp, UpdatedAt: timestamp, Satellite: satellite}
 }
@@ -105,62 +50,85 @@ type httpResult struct {
 
 func requestGraphQL(t *testing.T, handler http.Handler, query string, variables map[string]any) httpResult {
 	t.Helper()
+
 	body, err := json.Marshal(map[string]any{"query": query, "variables": variables})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/graphql", bytes.NewReader(body))
+	require.NoError(t, err)
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/graphql", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
+
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
+
 	var result httpResult
-	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
-		t.Fatalf("decode HTTP %d: %v: %s", recorder.Code, err, recorder.Body.String())
-	}
+	require.NoError(
+		t,
+		json.Unmarshal(recorder.Body.Bytes(), &result),
+		"decode HTTP %d: %s",
+		recorder.Code,
+		recorder.Body.String(),
+	)
+
 	return result
 }
 
-func testHandler(service *serviceSpy) http.Handler {
-	return newHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func testHandler(service mainService) http.Handler {
+	return NewHandler(service, slog.New(slog.DiscardHandler))
 }
 
 func jsonObject(t *testing.T, value string) map[string]any {
 	t.Helper()
+
 	var decoded map[string]any
+
 	decoder := json.NewDecoder(strings.NewReader(value))
 	decoder.UseNumber()
-	if err := decoder.Decode(&decoded); err != nil {
-		t.Fatal(err)
-	}
+
+	require.NoError(t, decoder.Decode(&decoded))
+
 	return decoded
 }
 
-func expectRejected(t *testing.T, result httpResult) {
-	t.Helper()
-	if len(result.Errors) == 0 {
-		t.Fatalf("expected GraphQL errors, got %+v", result)
-	}
-	for _, err := range result.Errors {
-		if err.Extensions["code"] == domain.InternalServerError {
-			t.Fatalf("invalid input caused an internal error: %+v", result.Errors)
-		}
-	}
-}
-
 func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ name, literal, variable string }{
 		{"root empty", `{}`, `{}`},
-		{"root multiple", `{delete:{id:"1"},create:{title:"x",satellite:{tool:{}}}}`, `{"delete":{"id":"1"},"create":{"title":"x","satellite":{"tool":{}}}}`},
+		{
+			"root multiple",
+			`{delete:{id:"1"},create:{title:"x",satellite:{tool:{}}}}`,
+			`{"delete":{"id":"1"},"create":{"title":"x","satellite":{"tool":{}}}}`,
+		},
 		{"root null", `{delete:null}`, `{"delete":null}`},
 		{"root extra null", `{delete:{id:"1"},create:null}`, `{"delete":{"id":"1"},"create":null}`},
 		{"create empty", `{create:{title:"x",satellite:{}}}`, `{"create":{"title":"x","satellite":{}}}`},
-		{"create multiple", `{create:{title:"x",satellite:{tool:{},table:{}}}}`, `{"create":{"title":"x","satellite":{"tool":{},"table":{}}}}`},
-		{"create null", `{create:{title:"x",satellite:{tool:null}}}`, `{"create":{"title":"x","satellite":{"tool":null}}}`},
-		{"create extra null", `{create:{title:"x",satellite:{tool:{},chair:null}}}`, `{"create":{"title":"x","satellite":{"tool":{},"chair":null}}}`},
+		{
+			"create multiple",
+			`{create:{title:"x",satellite:{tool:{},table:{}}}}`,
+			`{"create":{"title":"x","satellite":{"tool":{},"table":{}}}}`,
+		},
+		{
+			"create null",
+			`{create:{title:"x",satellite:{tool:null}}}`,
+			`{"create":{"title":"x","satellite":{"tool":null}}}`,
+		},
+		{
+			"create extra null",
+			`{create:{title:"x",satellite:{tool:{},chair:null}}}`,
+			`{"create":{"title":"x","satellite":{"tool":{},"chair":null}}}`,
+		},
 		{"update empty", `{update:{id:"1",satellite:{}}}`, `{"update":{"id":"1","satellite":{}}}`},
-		{"update multiple", `{update:{id:"1",satellite:{tool:{description1:"a"},table:{description2:"b"}}}}`, `{"update":{"id":"1","satellite":{"tool":{"description1":"a"},"table":{"description2":"b"}}}}`},
+		{
+			"update multiple",
+			`{update:{id:"1",satellite:{tool:{description1:"a"},table:{description2:"b"}}}}`,
+			`{"update":{"id":"1","satellite":{"tool":{"description1":"a"},"table":{"description2":"b"}}}}`,
+		},
 		{"update null", `{update:{id:"1",satellite:{tool:null}}}`, `{"update":{"id":"1","satellite":{"tool":null}}}`},
-		{"update extra null", `{update:{id:"1",satellite:{tool:{description1:null},table:null}}}`, `{"update":{"id":"1","satellite":{"tool":{"description1":null},"table":null}}}`},
+		{
+			"update extra null",
+			`{update:{id:"1",satellite:{tool:{description1:null},table:null}}}`,
+			`{"update":{"id":"1","satellite":{"tool":{"description1":null},"table":null}}}`,
+		},
 	}
 	for _, test := range cases {
 		for _, variables := range []bool{false, true} {
@@ -168,17 +136,24 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 			if variables {
 				mode = "variables"
 			}
+
 			t.Run(test.name+"/"+mode, func(t *testing.T) {
-				spy := &serviceSpy{}
+				t.Parallel()
+				mock := NewMockMainService(gomock.NewController(t))
 				query := `mutation { main(input:` + test.literal + `) { deletedId } }`
+
 				var input map[string]any
+
 				if variables {
 					query = `mutation($input:MainMutationInput!){main(input:$input){deletedId}}`
 					input = map[string]any{"input": jsonObject(t, test.variable)}
 				}
-				expectRejected(t, requestGraphQL(t, testHandler(spy), query, input))
-				if spy.calls != 0 {
-					t.Fatalf("invalid OneOf reached service %d times", spy.calls)
+
+				result := requestGraphQL(t, testHandler(mock), query, input)
+				require.NotEmpty(t, result.Errors)
+
+				for _, err := range result.Errors {
+					require.NotEqual(t, internalServerError, err.Extensions["code"])
 				}
 			})
 		}
@@ -186,52 +161,100 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 }
 
 func TestOneOfValidationBeforeAnyMutationAlias(t *testing.T) {
-	spy := &serviceSpy{}
-	result := requestGraphQL(t, testHandler(spy), `mutation($bad:MainMutationInput!){
+	t.Parallel()
+	mock := NewMockMainService(gomock.NewController(t))
+	result := requestGraphQL(t, testHandler(mock), `mutation($bad:MainMutationInput!){
 		first:main(input:{create:{title:"first",satellite:{tool:{}}}}){main{id}}
 		second:main(input:$bad){deletedId}
 	}`, map[string]any{"bad": map[string]any{"delete": map[string]any{"id": "1"}, "create": nil}})
-	expectRejected(t, result)
-	if spy.calls != 0 {
-		t.Fatalf("an earlier alias executed before invalid OneOf rejection: %d", spy.calls)
+	require.NotEmpty(t, result.Errors)
+
+	for _, err := range result.Errors {
+		require.NotEqual(t, internalServerError, err.Extensions["code"])
 	}
 }
 
 func TestOneOfDirectBranchVariables(t *testing.T) {
-	cases := []struct {
+	t.Parallel()
+
+	const (
+		nullBranch  = "null"
+		valueBranch = "provided"
+	)
+
+	tests := []struct {
 		name, typ, input string
 		valid            any
+		expect           func(*MockMainService)
 	}{
-		{"root", "MainDeleteInput", `{delete:$branch}`, map[string]any{"id": "1"}},
-		{"create", "ToolCreateInput", `{create:{title:"",satellite:{tool:$branch}}}`, map[string]any{}},
-		{"update", "ToolUpdateInput", `{update:{id:"1",satellite:{tool:$branch}}}`, map[string]any{"description1": nil}},
+		{
+			name: "delete", typ: "MainDeleteInput", input: "{delete:$branch}",
+			valid: map[string]any{"id": "1"},
+			expect: func(mock *MockMainService) {
+				mock.EXPECT().Delete(gomock.Any(), int64(1)).Return(int64(1), nil)
+			},
+		},
+		{
+			name: "create", typ: "ToolCreateInput", input: "{create:{title:\"\",satellite:{tool:$branch}}}",
+			valid: map[string]any{},
+			expect: func(mock *MockMainService) {
+				input := service.CreateInput{Satellite: service.SatelliteCreateInput{Tool: &service.ToolCreateInput{}}}
+				mock.EXPECT().Create(gomock.Any(), input).Return(sampleMain(domain.Tools), nil)
+			},
+		},
+		{
+			name: "update", typ: "ToolUpdateInput", input: "{update:{id:\"1\",satellite:{tool:$branch}}}",
+			valid: map[string]any{"description1": nil},
+			expect: func(mock *MockMainService) {
+				input := service.UpdateInput{
+					ID:           1,
+					SatelliteSet: true,
+					Satellite:    &service.SatelliteUpdateInput{Tool: &service.ToolUpdateInput{Description1Set: true}},
+				}
+				mock.EXPECT().Update(gomock.Any(), input).Return(sampleMain(domain.Tools), nil)
+			},
+		},
 	}
-	for _, test := range cases {
+	for _, test := range tests {
 		for _, required := range []bool{false, true} {
-			for _, state := range []string{"missing", "null", "value"} {
-				t.Run(test.name+"/"+map[bool]string{false: "nullable", true: "non-null"}[required]+"/"+state, func(t *testing.T) {
+			for _, state := range []string{"missing", nullBranch, valueBranch} {
+				t.Run(fmt.Sprintf("%s/required=%t/%s", test.name, required, state), func(t *testing.T) {
+					t.Parallel()
+					mock := NewMockMainService(gomock.NewController(t))
+
 					typ := test.typ
 					if required {
 						typ += "!"
 					}
+
 					variables := map[string]any{}
-					if state == "null" {
+					if state == nullBranch {
 						variables["branch"] = nil
 					}
-					if state == "value" {
+
+					if state == valueBranch {
 						variables["branch"] = test.valid
 					}
-					spy := &serviceSpy{}
-					result := requestGraphQL(t, testHandler(spy), `mutation($branch:`+typ+`){main(input:`+test.input+`){deletedId}}`, variables)
-					if required && state == "value" {
-						if len(result.Errors) != 0 || spy.calls != 1 {
-							t.Fatalf("valid OneOf rejected: %+v, calls=%d", result.Errors, spy.calls)
+
+					wantError := !required || state != valueBranch
+					if !wantError {
+						test.expect(mock)
+					}
+
+					result := requestGraphQL(
+						t,
+						testHandler(mock),
+						"mutation($branch:"+typ+"){main(input:"+test.input+"){deletedId}}",
+						variables,
+					)
+					if wantError {
+						require.NotEmpty(t, result.Errors)
+
+						for _, err := range result.Errors {
+							require.NotEqual(t, internalServerError, err.Extensions["code"])
 						}
 					} else {
-						expectRejected(t, result)
-						if spy.calls != 0 {
-							t.Fatal("invalid branch variable reached service")
-						}
+						require.Empty(t, result.Errors)
 					}
 				})
 			}
@@ -240,245 +263,604 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 }
 
 func TestInputMappingPreservesPatchStates(t *testing.T) {
-	cases := []struct {
-		name, fields                                                     string
-		titleSet, satelliteSet, descriptionSet, descriptionNull, typeSet bool
-		description                                                      string
-	}{
-		{"title only", `"title":"new"`, true, false, false, false, false, ""},
-		{"description value", `"satellite":{"tool":{"description1":"value"}}`, false, true, true, false, false, "value"},
-		{"description null", `"satellite":{"tool":{"description1":null}}`, false, true, true, true, false, ""},
-		{"description empty", `"satellite":{"table":{"description2":""}}`, false, true, true, false, false, ""},
-		{"chair type only", `"satellite":{"chair":{"type":"cde"}}`, false, true, false, false, true, ""},
-		{"chair description", `"satellite":{"chair":{"description3":"seat"}}`, false, true, true, false, false, "seat"},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			spy := &serviceSpy{}
-			input := jsonObject(t, `{"update":{"id":"1",`+test.fields+`}}`)
-			result := requestGraphQL(t, testHandler(spy), `mutation($input:MainMutationInput!){main(input:$input){main{id}}}`, map[string]any{"input": input})
-			if len(result.Errors) != 0 {
-				t.Fatalf("unexpected errors: %+v", result.Errors)
-			}
-			if spy.update.Title.Set != test.titleSet || spy.update.Satellite.Set != test.satelliteSet {
-				t.Fatalf("lost patch presence: %+v", spy.update)
-			}
-			if test.satelliteSet {
-				patch := spy.update.Satellite.Value
-				if patch == nil || patch.Description.Set != test.descriptionSet || patch.Type.Set != test.typeSet {
-					t.Fatalf("lost satellite patch presence: %+v", patch)
-				}
-				if test.descriptionSet {
-					if (patch.Description.Value == nil) != test.descriptionNull {
-						t.Fatalf("lost explicit null: %+v", patch.Description)
-					}
-					if !test.descriptionNull && *patch.Description.Value != test.description {
-						t.Fatalf("description = %q", *patch.Description.Value)
-					}
-				}
-			}
-		})
-	}
-}
+	t.Parallel()
 
-func TestMissingVariableInsidePatchStaysAbsent(t *testing.T) {
-	spy := &serviceSpy{}
-	result := requestGraphQL(t, testHandler(spy), `mutation($description:String){main(input:{update:{id:"1",satellite:{chair:{type:cde,description3:$description}}}}){main{id}}}`, nil)
-	if len(result.Errors) != 0 {
-		t.Fatalf("unexpected errors: %+v", result.Errors)
-	}
-	if spy.update.Satellite.Value.Description.Set {
-		t.Fatal("missing variable was coerced into explicit null")
-	}
-}
+	title, description, empty := "new", "value", ""
+	chairType := domain.CDE
 
-func TestRequiredAndForbiddenInputs(t *testing.T) {
-	inputs := []string{
-		`{create:{satellite:{tool:{}}}}`,
-		`{create:{title:null,satellite:{tool:{}}}}`,
-		`{create:{title:"x",satellite:{chair:{}}}}`,
-		`{create:{title:"x",satellite:{chair:{type:null}}}}`,
-		`{create:{title:"x",satellite:{chair:{type:invalid}}}}`,
-		`{create:{id:"1",title:"x",satellite:{tool:{}}}}`,
-		`{create:{title:"x",sub_id:"1",satellite:{tool:{}}}}`,
-		`{create:{title:"x",satellite:{tool:{main_id:"1"}}}}`,
-		`{update:{id:"1",deletedAt:null}}`,
-		`{update:{id:"1",createdAt:"2026-01-01T00:00:00Z"}}`,
-	}
-	for _, input := range inputs {
-		t.Run(input, func(t *testing.T) {
-			spy := &serviceSpy{}
-			expectRejected(t, requestGraphQL(t, testHandler(spy), `mutation{main(input:`+input+`){deletedId}}`, nil))
-			if spy.calls != 0 {
-				t.Fatal("invalid schema input reached service")
-			}
-		})
-	}
-}
-
-func TestInvalidPatchAndArguments(t *testing.T) {
-	queries := []string{
-		`mutation{main(input:{update:{id:"1"}}){main{id}}}`,
-		`mutation{main(input:{update:{id:"1",title:null}}){main{id}}}`,
-		`mutation{main(input:{update:{id:"1",satellite:null}}){main{id}}}`,
-		`mutation{main(input:{update:{id:"1",satellite:{tool:{}}}}){main{id}}}`,
-		`mutation{main(input:{update:{id:"1",satellite:{table:{}}}}){main{id}}}`,
-		`mutation{main(input:{update:{id:"1",satellite:{chair:{}}}}){main{id}}}`,
-		`mutation{main(input:{update:{id:"1",satellite:{chair:{type:null}}}}){main{id}}}`,
-		`{main(limit:0){id}}`, `{main(limit:101){id}}`, `{main(offset:-1){id}}`,
-	}
-	for _, query := range queries {
-		t.Run(query, func(t *testing.T) {
-			result := requestGraphQL(t, testHandler(&serviceSpy{}), query, nil)
-			expectRejected(t, result)
-			if result.Errors[0].Extensions["code"] != domain.BadUserInput {
-				t.Fatalf("wrong error: %+v", result.Errors)
-			}
-		})
-	}
-}
-
-func TestIDFormatAndRange(t *testing.T) {
-	for _, id := range []string{"", "0", "-1", "+1", "1.5", "1e2", " 1", "1 ", "x", "9223372036854775808"} {
-		t.Run(id, func(t *testing.T) {
-			spy := &serviceSpy{}
-			result := requestGraphQL(t, testHandler(spy), `query($id:ID){main(id:$id){id}}`, map[string]any{"id": id})
-			expectRejected(t, result)
-			if result.Errors[0].Extensions["code"] != domain.BadUserInput || spy.calls != 0 {
-				t.Fatalf("bad ID reached service: %+v", result)
-			}
-		})
-	}
-	for _, id := range []any{nil, "1", "9223372036854775807", json.Number("9223372036854775807")} {
-		spy := &serviceSpy{}
-		result := requestGraphQL(t, testHandler(spy), `query($id:ID){main(id:$id){id}}`, map[string]any{"id": id})
-		if len(result.Errors) != 0 {
-			t.Fatalf("valid ID %v rejected: %+v", id, result.Errors)
-		}
-		if id == nil && spy.list.ID != nil {
-			t.Fatal("null id must mean no filter")
-		}
-		if spy.list.Limit != 20 || spy.list.Offset != 0 {
-			t.Fatalf("wrong query defaults: %+v", spy.list)
-		}
-		if string(result.Data["main"]) != "[]" {
-			t.Fatalf("empty list must serialize as []: %s", result.Data["main"])
-		}
-	}
-}
-
-func TestInputCoercionErrorsRemainClientErrors(t *testing.T) {
 	tests := []struct {
-		query     string
-		variables map[string]any
+		name, input string
+		want        service.UpdateInput
 	}{
-		{`query($offset:Int!){main(offset:$offset){id}}`, map[string]any{"offset": json.Number("2147483648")}},
-		{`{main(offset:2147483648){id}}`, nil},
-		{`mutation($input:MainMutationInput!){main(input:$input){main{id}}}`, jsonObject(t, `{"input":{"create":{"title":"x","satellite":{"chair":{"type":"ABC"}}}}}`)},
+		{name: "title", input: `"title":"new"`, want: service.UpdateInput{ID: 1, Title: &title, TitleSet: true}},
+		{
+			name:  "tool value",
+			input: `"satellite":{"tool":{"description1":"value"}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Tool: &service.ToolUpdateInput{Description1: &description, Description1Set: true},
+				},
+			},
+		},
+		{
+			name:  "tool null",
+			input: `"satellite":{"tool":{"description1":null}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite:    &service.SatelliteUpdateInput{Tool: &service.ToolUpdateInput{Description1Set: true}},
+			},
+		},
+		{
+			name:  "tool empty",
+			input: `"satellite":{"tool":{"description1":""}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Tool: &service.ToolUpdateInput{Description1: &empty, Description1Set: true},
+				},
+			},
+		},
+		{
+			name:  "table value",
+			input: `"satellite":{"table":{"description2":"value"}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Table: &service.TableUpdateInput{Description2: &description, Description2Set: true},
+				},
+			},
+		},
+		{
+			name:  "table null",
+			input: `"satellite":{"table":{"description2":null}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite:    &service.SatelliteUpdateInput{Table: &service.TableUpdateInput{Description2Set: true}},
+			},
+		},
+		{
+			name:  "table empty",
+			input: `"satellite":{"table":{"description2":""}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Table: &service.TableUpdateInput{Description2: &empty, Description2Set: true},
+				},
+			},
+		},
+		{
+			name:  "chair value",
+			input: `"satellite":{"chair":{"description3":"value"}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Chair: &service.ChairUpdateInput{Description3: &description, Description3Set: true},
+				},
+			},
+		},
+		{
+			name:  "chair null",
+			input: `"satellite":{"chair":{"description3":null}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite:    &service.SatelliteUpdateInput{Chair: &service.ChairUpdateInput{Description3Set: true}},
+			},
+		},
+		{
+			name:  "chair empty",
+			input: `"satellite":{"chair":{"description3":""}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Chair: &service.ChairUpdateInput{Description3: &empty, Description3Set: true},
+				},
+			},
+		},
+		{
+			name:  "chair type only",
+			input: `"satellite":{"chair":{"type":"cde"}}`,
+			want: service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite: &service.SatelliteUpdateInput{
+					Chair: &service.ChairUpdateInput{Type: &chairType, TypeSet: true},
+				},
+			},
+		},
 	}
 	for _, test := range tests {
-		spy := &serviceSpy{}
-		expectRejected(t, requestGraphQL(t, testHandler(spy), test.query, test.variables))
-		if spy.calls != 0 {
-			t.Fatal("invalid scalar or enum reached service")
-		}
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			mock.EXPECT().Update(gomock.Any(), test.want).Return(sampleMain(domain.Tools), nil)
+
+			result := requestGraphQL(
+				t,
+				testHandler(mock),
+				`mutation($input:MainMutationInput!){main(input:$input){main{id}}}`,
+				map[string]any{"input": jsonObject(t, `{"update":{"id":"1",`+test.input+`}}`)},
+			)
+			require.Empty(t, result.Errors)
+		})
+	}
+}
+
+func TestPatchVariablePresence(t *testing.T) {
+	t.Parallel()
+
+	description := "value"
+	chairType := domain.CDE
+
+	tests := []struct {
+		name      string
+		variables map[string]any
+		want      service.ChairUpdateInput
+	}{
+		{name: "missing", want: service.ChairUpdateInput{Type: &chairType, TypeSet: true}},
+		{
+			name:      "null",
+			variables: map[string]any{"description": nil},
+			want:      service.ChairUpdateInput{Description3Set: true, Type: &chairType, TypeSet: true},
+		},
+		{
+			name:      "provided",
+			variables: map[string]any{"description": description},
+			want: service.ChairUpdateInput{
+				Description3:    &description,
+				Description3Set: true,
+				Type:            &chairType,
+				TypeSet:         true,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			input := service.UpdateInput{
+				ID:           1,
+				SatelliteSet: true,
+				Satellite:    &service.SatelliteUpdateInput{Chair: &test.want},
+			}
+			mock.EXPECT().Update(gomock.Any(), input).Return(sampleMain(domain.Chairs), nil)
+
+			result := requestGraphQL(
+				t,
+				testHandler(mock),
+				`mutation($description:String) {
+					main(input:{update:{id:"1",satellite:{chair:{type:cde,description3:$description}}}}) { main{id} }
+				}`,
+				test.variables,
+			)
+			require.Empty(t, result.Errors)
+		})
+	}
+}
+
+func TestGraphQLValidationRejectsBeforeService(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, query string
+		variables   map[string]any
+	}{
+		{name: "missing title", query: `mutation{main(input:{create:{satellite:{tool:{}}}}){deletedId}}`},
+		{name: "null title", query: `mutation{main(input:{create:{title:null,satellite:{tool:{}}}}){deletedId}}`},
+		{
+			name:  "missing chair type",
+			query: `mutation{main(input:{create:{title:"x",satellite:{chair:{}}}}){deletedId}}`,
+		},
+		{
+			name:  "null chair type",
+			query: `mutation{main(input:{create:{title:"x",satellite:{chair:{type:null}}}}){deletedId}}`,
+		},
+		{
+			name:  "invalid enum",
+			query: `mutation{main(input:{create:{title:"x",satellite:{chair:{type:invalid}}}}){deletedId}}`,
+		},
+		{name: "foreign id", query: `mutation{main(input:{create:{id:"1",title:"x",satellite:{tool:{}}}}){deletedId}}`},
+		{name: "sub id", query: `mutation{main(input:{create:{title:"x",sub_id:"1",satellite:{tool:{}}}}){deletedId}}`},
+		{
+			name:  "satellite owner",
+			query: `mutation{main(input:{create:{title:"x",satellite:{tool:{main_id:"1"}}}}){deletedId}}`,
+		},
+		{name: "deleted timestamp", query: `mutation{main(input:{update:{id:"1",deletedAt:null}}){deletedId}}`},
+		{
+			name:  "created timestamp",
+			query: `mutation{main(input:{update:{id:"1",createdAt:"2026-01-01T00:00:00Z"}}){deletedId}}`,
+		},
+		{
+			name:      "integer overflow variable",
+			query:     `query($offset:Int!){main(offset:$offset){id}}`,
+			variables: map[string]any{"offset": json.Number("2147483648")},
+		},
+		{name: "integer overflow literal", query: `{main(offset:2147483648){id}}`},
+		{
+			name:      "case sensitive enum",
+			query:     `mutation($input:MainMutationInput!){main(input:$input){main{id}}}`,
+			variables: jsonObject(t, `{"input":{"create":{"title":"x","satellite":{"chair":{"type":"ABC"}}}}}`),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			result := requestGraphQL(t, testHandler(mock), test.query, test.variables)
+			require.NotEmpty(t, result.Errors)
+
+			for _, err := range result.Errors {
+				require.NotEqual(t, internalServerError, err.Extensions["code"])
+			}
+		})
+	}
+}
+
+func TestServiceErrorsArePresented(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, code string
+		err        error
+	}{
+		{name: "invalid input", code: badUserInput, err: service.ErrInvalidInput},
+		{name: "not found", code: "NOT_FOUND", err: service.ErrNotFound},
+		{name: "already deleted", code: "ALREADY_DELETED", err: service.ErrAlreadyDeleted},
+		{name: "satellite mismatch", code: "SATELLITE_TYPE_MISMATCH", err: service.ErrSatelliteTypeMismatch},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			mock.EXPECT().Delete(gomock.Any(), int64(1)).Return(int64(0), fmt.Errorf("operation context: %w", test.err))
+			result := requestGraphQL(t, testHandler(mock), `mutation{main(input:{delete:{id:"1"}}){deletedId}}`, nil)
+			require.Len(t, result.Errors, 1)
+			require.Equal(t, test.code, result.Errors[0].Extensions["code"])
+			require.JSONEq(t, "null", string(result.Data["main"]))
+		})
+	}
+}
+
+func TestInvalidIDFormats(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{"", "-1", "+1", "1.5", "1e2", " 1", "1 ", "x", "9223372036854775808"} {
+		t.Run(id, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			result := requestGraphQL(t, testHandler(mock), `query($id:ID){main(id:$id){id}}`, map[string]any{"id": id})
+			require.Len(t, result.Errors, 1)
+			require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
+		})
+	}
+}
+
+func TestListInputMapping(t *testing.T) {
+	t.Parallel()
+
+	mainID := int64(1)
+	bigID := int64(9223372036854775807)
+
+	tests := []struct {
+		name      string
+		variables map[string]any
+		want      service.ListInput
+	}{
+		{name: "defaults", want: service.ListInput{Limit: 20}},
+		{name: "null id", variables: map[string]any{"id": nil}, want: service.ListInput{Limit: 20}},
+		{name: "id", variables: map[string]any{"id": "1"}, want: service.ListInput{ID: &mainID, Limit: 20}},
+		{
+			name:      "maximum string id",
+			variables: map[string]any{"id": "9223372036854775807"},
+			want:      service.ListInput{ID: &bigID, Limit: 20},
+		},
+		{
+			name:      "maximum numeric id",
+			variables: map[string]any{"id": json.Number("9223372036854775807")},
+			want:      service.ListInput{ID: &bigID, Limit: 20},
+		},
+		{
+			name:      "pagination",
+			variables: map[string]any{"limit": 100, "offset": 7},
+			want:      service.ListInput{Limit: 100, Offset: 7},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			mock.EXPECT().List(gomock.Any(), test.want).Return([]*domain.Main{}, nil)
+
+			result := requestGraphQL(
+				t,
+				testHandler(mock),
+				`query($id:ID,$limit:Int! = 20,$offset:Int! = 0){main(id:$id,limit:$limit,offset:$offset){id}}`,
+				test.variables,
+			)
+			require.Empty(t, result.Errors)
+			require.JSONEq(t, "[]", string(result.Data["main"]))
+		})
+	}
+}
+
+func TestServiceRejectsInvalidInputsBeforeDatabase(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ name, query string }{
+		{name: "empty update", query: `mutation{main(input:{update:{id:"1"}}){main{id}}}`},
+		{name: "null title", query: `mutation{main(input:{update:{id:"1",title:null}}){main{id}}}`},
+		{name: "null satellite", query: `mutation{main(input:{update:{id:"1",satellite:null}}){main{id}}}`},
+		{name: "empty tool patch", query: `mutation{main(input:{update:{id:"1",satellite:{tool:{}}}}){main{id}}}`},
+		{name: "empty table patch", query: `mutation{main(input:{update:{id:"1",satellite:{table:{}}}}){main{id}}}`},
+		{name: "empty chair patch", query: `mutation{main(input:{update:{id:"1",satellite:{chair:{}}}}){main{id}}}`},
+		{
+			name:  "null chair type",
+			query: `mutation{main(input:{update:{id:"1",satellite:{chair:{type:null}}}}){main{id}}}`,
+		},
+		{name: "limit zero", query: `{main(limit:0){id}}`},
+		{name: "limit too large", query: `{main(limit:101){id}}`},
+		{name: "negative offset", query: `{main(offset:-1){id}}`},
+		{name: "zero query id", query: `{main(id:"0"){id}}`},
+		{name: "zero update id", query: `mutation{main(input:{update:{id:"0",title:"x"}}){main{id}}}`},
+		{name: "zero delete id", query: `mutation{main(input:{delete:{id:"0"}}){deletedId}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result := requestGraphQL(t, testHandler(service.New(nil)), test.query, nil)
+			require.Len(t, result.Errors, 1)
+			require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
+		})
 	}
 }
 
 func TestSchemaHasOnlyRequiredBusinessRoots(t *testing.T) {
-	result := requestGraphQL(t, testHandler(&serviceSpy{}), `{__schema{queryType{fields{name}}mutationType{fields{name}}subscriptionType{name}}}`, nil)
-	if len(result.Errors) != 0 {
-		t.Fatal(result.Errors)
-	}
+	t.Parallel()
+
+	result := requestGraphQL(
+		t,
+		testHandler(NewMockMainService(gomock.NewController(t))),
+		`{__schema{queryType{fields{name}}mutationType{fields{name}}subscriptionType{name}}}`,
+		nil,
+	)
+	require.Empty(t, result.Errors)
+
 	var schema struct {
-		QueryType        struct{ Fields []struct{ Name string } }
-		MutationType     struct{ Fields []struct{ Name string } }
-		SubscriptionType any
+		QueryType struct {
+			Fields []struct {
+				Name string `json:"name"`
+			} `json:"fields"`
+		} `json:"queryType"`
+		MutationType struct {
+			Fields []struct {
+				Name string `json:"name"`
+			} `json:"fields"`
+		} `json:"mutationType"`
+		SubscriptionType any `json:"subscriptionType"`
 	}
-	if err := json.Unmarshal(result.Data["__schema"], &schema); err != nil {
-		t.Fatal(err)
-	}
-	if len(schema.QueryType.Fields) != 1 || schema.QueryType.Fields[0].Name != "main" || len(schema.MutationType.Fields) != 1 || schema.MutationType.Fields[0].Name != "main" || schema.SubscriptionType != nil {
-		t.Fatalf("unexpected roots: %+v", schema)
-	}
-	for _, name := range []string{"MainMutationInput", "SatelliteCreateInput", "SatelliteUpdateInput"} {
-		result := requestGraphQL(t, testHandler(&serviceSpy{}), `{__type(name:"`+name+`"){isOneOf inputFields{name defaultValue type{kind}}}}`, nil)
-		var typ struct {
-			IsOneOf     bool
-			InputFields []struct {
-				Name         string
-				DefaultValue any
-				Type         struct{ Kind string }
-			}
-		}
-		if err := json.Unmarshal(result.Data["__type"], &typ); err != nil {
-			t.Fatal(err)
-		}
-		if !typ.IsOneOf || len(typ.InputFields) != 3 {
-			t.Fatalf("wrong OneOf introspection: %+v", typ)
-		}
-		for _, field := range typ.InputFields {
-			if field.DefaultValue != nil || field.Type.Kind == "NON_NULL" {
-				t.Fatalf("OneOf field cannot be required or defaulted: %+v", field)
-			}
-		}
-	}
+	require.NoError(t, json.Unmarshal(result.Data["__schema"], &schema))
+
+	require.Len(t, schema.QueryType.Fields, 1)
+	require.Equal(t, "main", schema.QueryType.Fields[0].Name)
+	require.Len(t, schema.MutationType.Fields, 1)
+	require.Equal(t, "main", schema.MutationType.Fields[0].Name)
+	require.Nil(t, schema.SubscriptionType)
 }
 
-func TestCreateOutputUsesUnionStringIDsAndUTC(t *testing.T) {
-	for _, test := range []struct{ kind, typename, contents, fragment string }{
-		{"tool", "Tool", `{}`, `description1`}, {"table", "Table", `{}`, `description2`}, {"chair", "Chair", `{type:abc}`, `description3 type`},
-	} {
+func TestOneOfSchema(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"MainMutationInput", "SatelliteCreateInput", "SatelliteUpdateInput"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			result := requestGraphQL(
+				t,
+				testHandler(NewMockMainService(gomock.NewController(t))),
+				`{__type(name:"`+name+`"){isOneOf inputFields{name defaultValue type{kind}}}}`,
+				nil,
+			)
+
+			require.Empty(t, result.Errors)
+
+			var typ struct {
+				IsOneOf     bool `json:"isOneOf"`
+				InputFields []struct {
+					Name         string `json:"name"`
+					DefaultValue any    `json:"defaultValue"`
+					Type         struct {
+						Kind string `json:"kind"`
+					} `json:"type"`
+				} `json:"inputFields"`
+			}
+			require.NoError(t, json.Unmarshal(result.Data["__type"], &typ))
+
+			require.True(t, typ.IsOneOf)
+			require.Len(t, typ.InputFields, 3)
+
+			for _, field := range typ.InputFields {
+				require.Nil(t, field.DefaultValue)
+				require.NotEqual(t, "NON_NULL", field.Type.Kind)
+			}
+		})
+	}
+}
+func TestCreateInputAndOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		kind, typename, contents, fragment string
+		want                               service.CreateInput
+	}{
+		{
+			kind:     "tool",
+			typename: "Tool",
+			contents: "{}",
+			fragment: "description1",
+			want:     service.CreateInput{Satellite: service.SatelliteCreateInput{Tool: &service.ToolCreateInput{}}},
+		},
+		{
+			kind:     "table",
+			typename: "Table",
+			contents: "{}",
+			fragment: "description2",
+			want:     service.CreateInput{Satellite: service.SatelliteCreateInput{Table: &service.TableCreateInput{}}},
+		},
+		{
+			kind:     "chair",
+			typename: "Chair",
+			contents: "{type:abc}",
+			fragment: "description3 type",
+			want: service.CreateInput{
+				Satellite: service.SatelliteCreateInput{Chair: &service.ChairCreateInput{Type: domain.ABC}},
+			},
+		},
+	}
+	for _, test := range tests {
 		t.Run(test.kind, func(t *testing.T) {
-			spy := &serviceSpy{}
-			result := requestGraphQL(t, testHandler(spy), `mutation{main(input:{create:{title:"",satellite:{`+test.kind+`:`+test.contents+`}}}){deletedId main{id title createdAt updatedAt deletedAt satellite{__typename ... on `+test.typename+` { id `+test.fragment+` createdAt updatedAt deletedAt }}}}}`, nil)
-			if len(result.Errors) != 0 {
-				t.Fatal(result.Errors)
-			}
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			kind := map[string]domain.Kind{"tool": domain.Tools, "table": domain.Tables, "chair": domain.Chairs}[test.kind]
+			value := sampleMain(kind)
+			mock.EXPECT().Create(gomock.Any(), test.want).Return(value, nil)
+
+			result := requestGraphQL(
+				t,
+				testHandler(mock),
+				`mutation {
+					main(input:{create:{title:"",satellite:{`+test.kind+`:`+test.contents+`}}}) {
+						deletedId
+						main {
+							id title createdAt updatedAt deletedAt
+							satellite {
+								__typename
+								... on `+test.typename+` { id `+test.fragment+` createdAt updatedAt deletedAt }
+							}
+						}
+					}
+				}`,
+				nil,
+			)
+			require.Empty(t, result.Errors)
+
 			var payload struct {
-				DeletedID *string
+				DeletedID *string `json:"deletedId"`
 				Main      struct {
-					ID        string
-					Title     string
-					CreatedAt string
-					UpdatedAt string
-					DeletedAt *string
-					Satellite map[string]any
-				}
+					ID        string         `json:"id"`
+					Title     string         `json:"title"`
+					CreatedAt string         `json:"createdAt"`
+					UpdatedAt string         `json:"updatedAt"`
+					DeletedAt *string        `json:"deletedAt"`
+					Satellite map[string]any `json:"satellite"`
+				} `json:"main"`
 			}
-			if err := json.Unmarshal(result.Data["main"], &payload); err != nil {
-				t.Fatal(err)
-			}
-			if payload.DeletedID != nil || payload.Main.ID != "9223372036854775807" || payload.Main.Title != "" || payload.Main.Satellite["__typename"] != test.typename || payload.Main.Satellite["id"] != "2" {
-				t.Fatalf("bad payload: %+v", payload)
-			}
-			if !strings.HasSuffix(payload.Main.CreatedAt, "Z") || payload.Main.CreatedAt != payload.Main.UpdatedAt || payload.Main.DeletedAt != nil {
-				t.Fatalf("timestamps must be UTC RFC3339: %+v", payload.Main)
-			}
-			if spy.create.Description != nil {
-				t.Fatal("missing description must map to SQL NULL")
-			}
+			require.NoError(t, json.Unmarshal(result.Data["main"], &payload))
+
+			require.Nil(t, payload.DeletedID)
+			require.Equal(t, "9223372036854775807", payload.Main.ID)
+			require.Equal(t, value.Title, payload.Main.Title)
+			require.Equal(t, test.typename, payload.Main.Satellite["__typename"])
+			require.Equal(t, "2", payload.Main.Satellite["id"])
+			require.Equal(t, "2026-09-15T10:42:10.000123Z", payload.Main.CreatedAt)
+			require.Equal(t, payload.Main.CreatedAt, payload.Main.UpdatedAt)
+			require.Nil(t, payload.Main.DeletedAt)
 		})
 	}
 }
 
 func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
-	for _, original := range []error{errors.New("postgres://secret@host SELECT sensitive"), &domain.Error{Code: domain.InternalServerError, Message: "database operation failed", Cause: errors.New("private SQL cause")}} {
-		var log bytes.Buffer
-		handler := newHandler(&serviceSpy{err: original}, slog.New(slog.NewTextHandler(&log, nil)))
-		result := requestGraphQL(t, handler, `{main{id}}`, nil)
-		if len(result.Errors) != 1 || result.Errors[0].Message != "internal server error" || result.Errors[0].Extensions["code"] != domain.InternalServerError {
-			t.Fatalf("internal error leaked or lost code: %+v", result)
-		}
-		if !strings.Contains(log.String(), original.Error()) {
-			t.Fatalf("internal cause not logged: %s", log.String())
-		}
-		if cause := errors.Unwrap(original); cause != nil && !strings.Contains(log.String(), cause.Error()) {
-			t.Fatalf("DB cause not logged: %s", log.String())
-		}
+	t.Parallel()
+
+	cause := errors.New("postgres://secret@host SELECT sensitive")
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "plain", err: cause},
+		{name: "wrapped", err: fmt.Errorf("list database records: %w", cause)},
 	}
-	result := requestGraphQL(t, testHandler(&serviceSpy{panicValue: "private panic"}), `{main{id}}`, nil)
-	if len(result.Errors) != 1 || result.Errors[0].Message != "internal server error" || result.Errors[0].Extensions["code"] != domain.InternalServerError {
-		t.Fatalf("panic leaked or lost code: %+v", result)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mock := NewMockMainService(gomock.NewController(t))
+			mock.EXPECT().List(gomock.Any(), service.ListInput{Limit: 20}).Return(nil, test.err)
+
+			var log bytes.Buffer
+
+			result := requestGraphQL(t, NewHandler(mock, slog.New(slog.NewTextHandler(&log, nil))), "{main{id}}", nil)
+			require.Len(t, result.Errors, 1)
+			require.Equal(t, "internal server error", result.Errors[0].Message)
+			require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
+
+			require.Contains(t, log.String(), test.err.Error())
+		})
 	}
+}
+
+func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
+	t.Parallel()
+	mock := NewMockMainService(gomock.NewController(t))
+	mock.EXPECT().
+		List(gomock.Any(), service.ListInput{Limit: 20}).
+		DoAndReturn(func(context.Context, service.ListInput) ([]*domain.Main, error) {
+			panic("private panic")
+		})
+
+	var log bytes.Buffer
+
+	result := requestGraphQL(t, NewHandler(mock, slog.New(slog.NewTextHandler(&log, nil))), "{main{id}}", nil)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "internal server error", result.Errors[0].Message)
+	require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
+
+	require.Contains(t, log.String(), "private panic")
+}
+
+func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {
+	t.Parallel()
+	mock := NewMockMainService(gomock.NewController(t))
+
+	var query strings.Builder
+	query.WriteString("{")
+
+	for i := range 101 {
+		fmt.Fprintf(&query, "page%d:main(limit:100){id}", i)
+	}
+
+	query.WriteString("}")
+	result := requestGraphQL(t, testHandler(mock), query.String(), nil)
+	require.NotEmpty(t, result.Errors)
+
+	for _, err := range result.Errors {
+		require.NotEqual(t, internalServerError, err.Extensions["code"])
+	}
+}
+
+func TestMaximumPageAllowsCompleteSelection(t *testing.T) {
+	t.Parallel()
+	mock := NewMockMainService(gomock.NewController(t))
+	mock.EXPECT().List(gomock.Any(), service.ListInput{Limit: 100}).Return([]*domain.Main{}, nil)
+
+	result := requestGraphQL(t, testHandler(mock), `{
+		main(limit:100) {
+			id title createdAt updatedAt deletedAt
+			satellite {
+				__typename
+				... on Tool { id description1 createdAt updatedAt deletedAt }
+				... on Table { id description2 createdAt updatedAt deletedAt }
+				... on Chair { id description3 type createdAt updatedAt deletedAt }
+			}
+		}
+	}`, nil)
+	require.Empty(t, result.Errors)
+	require.JSONEq(t, "[]", string(result.Data["main"]))
 }
