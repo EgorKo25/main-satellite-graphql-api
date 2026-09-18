@@ -11,6 +11,8 @@ resolver:
   dir: internal/graph
   package: graph
   filename_template: "{name}.resolvers.go"
+  preserve_resolver: true
+  omit_template_comment: true
 nullable_input_omittable: true
 models:
   Int:
