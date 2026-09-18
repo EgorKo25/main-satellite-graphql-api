@@ -1,4 +1,5 @@
 .idea/
+AGENTS.md
 .tmp/
 .env
 .env.*
