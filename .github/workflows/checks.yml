@@ -1,0 +1,72 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.9-bookworm
+        env:
+          POSTGRES_USER: graphql_test
+          POSTGRES_PASSWORD: graphql_test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U graphql_test -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests with race detection
+        run: go test -race -count=1 ./...
+
+      - name: Vet
+        run: go vet -tags=integration ./...
+
+      - name: Verify generated code is reproducible
+        run: |
+          go generate ./...
+          git diff --exit-code
+          go generate ./...
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.13.2
+          args: --config=.golangci.yml --build-tags=integration
+
+      - name: PostgreSQL integration tests with race detection
+        if: ${{ hashFiles('tests/integration/**') != '' }}
+        env:
+          TEST_DATABASE_URL: postgres://graphql_test:graphql_test@localhost:5432/postgres?sslmode=disable
+        run: go test -race -tags=integration -count=1 ./tests/integration

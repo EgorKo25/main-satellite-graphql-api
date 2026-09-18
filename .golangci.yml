@@ -1,0 +1,123 @@
+version: "2"
+
+linters:
+  enable:
+    - asciicheck
+    - asasalint
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exptostd
+    - fatcontext
+    - forcetypeassert
+    - gocheckcompilerdirectives
+    - gosec
+    - govet
+    - ineffassign
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nosprintfhostport
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+    - wastedassign
+    - wrapcheck
+    - cyclop
+    - dupl
+    - dupword
+    - goconst
+    - gocritic
+    - grouper
+    - lll
+    - nlreturn
+    - revive
+    - sloglint
+    - tagalign
+    - unconvert
+    - usestdlibvars
+    - varnamelen
+    - whitespace
+    - wsl_v5
+    - gomoddirectives
+    - iface
+    - importas
+    - musttag
+    - paralleltest
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
+    - usetesting
+    - misspell
+    - intrange
+    - iotamixing
+    - makezero
+    - mirror
+    - modernize
+    - perfsprint
+    - goprintffuncname
+    - loggercheck
+    - promlinter
+    - nolintlint
+  exclusions:
+    generated: strict
+    rules:
+      - path: '(.+)_test\.go'
+        linters:
+          - gosec
+          - cyclop
+      - path: '^internal/graph/.*_test\.go$'
+        linters:
+          - testpackage
+      - path: '^tests/integration/'
+        linters:
+          - paralleltest
+  settings:
+    cyclop:
+      max-complexity: 10
+      package-average: 0.0
+    revive:
+      severity: error
+      rules:
+        - name: package-comments
+          disabled: true
+        - name: exported
+          disabled: true
+
+formatters:
+  exclusions:
+    generated: strict
+  settings:
+    golines:
+      max-len: 120
+      reformat-tags: true
+  enable:
+    - gofmt
+    - goimports
+    - golines
+
+run:
+  timeout: 3m
+  tests: true
+  relative-path-mode: gomod
+  issues-exit-code: 1
+  allow-parallel-runners: true
+  enable-build-vcs: true
+  modules-download-mode: readonly
+  go: '1.26.8'
+  concurrency: 0
+severity:
+  default: error
