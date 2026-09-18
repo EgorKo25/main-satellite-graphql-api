@@ -9,6 +9,7 @@ require (
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/stretchr/testify v1.12.1
 	github.com/vektah/gqlparser/v2 v2.5.37
+	go.uber.org/mock v0.6.0
 )
 
 require (
@@ -39,4 +40,7 @@ require (
 	golang.org/x/tools v0.49.0 // indirect
 )
 
-tool github.com/99designs/gqlgen
+tool (
+	github.com/99designs/gqlgen
+	go.uber.org/mock/mockgen
+)
