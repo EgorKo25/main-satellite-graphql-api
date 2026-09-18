@@ -4,214 +4,252 @@ package integration_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"reflect"
+	"maps"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
-// A test-only trigger holds the first request after its Main write. Unlike a
-// scheduler-dependent race, this proves that the competing request waits for
-// Main, then rechecks the state committed by the first operation.
 func TestContendingWritesWaitAndRecheckState(t *testing.T) {
-	for _, tc := range []struct{ name, first, second string }{
-		{"update_then_delete", "update", "delete"},
-		{"delete_then_update", "delete", "update"},
-		{"delete_then_delete", "delete", "delete"},
+	for _, testCase := range []struct{ name, first, second, wantCode, wantTitle, wantType string }{
+		{"update_then_delete", updateOperation, deleteOperation, "", updatedValue, chairCDE},
+		{"delete_then_update", deleteOperation, updateOperation, "NOT_FOUND", previousValue, chairABC},
+		{"delete_then_delete", deleteOperation, deleteOperation, "ALREADY_DELETED", previousValue, chairABC},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := setup(t)
-			m := f.create(t, "chair", "old", object{"description3": "old", "type": "abc"})
-			id := idOf(m)
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		t.Run(testCase.name, func(t *testing.T) {
+			testFixture := setup(t)
+			main := testFixture.create(
+				t,
+				chairBranch,
+				previousValue,
+				object{chairDescriptionField: previousValue, typeField: chairABC},
+			)
+			mainID := idOf(t, main)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
-			gate, err := f.pool.Acquire(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
+
+			gate, err := testFixture.pool.Acquire(ctx)
+			require.NoError(t, err)
+
 			const key int64 = 81824791
-			if _, err := gate.Exec(ctx, `SELECT pg_advisory_lock($1)`, key); err != nil {
+
+			_, err = gate.Exec(ctx, `SELECT pg_advisory_lock($1)`, key)
+			if err != nil {
 				gate.Release()
-				t.Fatal(err)
+				require.NoError(t, err)
 			}
+
 			locked := true
+
 			defer func() {
+				defer gate.Release()
+
 				if locked {
 					cleanupCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 					defer done()
-					_, _ = gate.Exec(cleanupCtx, `SELECT pg_advisory_unlock($1)`, key)
+
+					if _, err := gate.Exec(cleanupCtx, `SELECT pg_advisory_unlock($1)`, key); err != nil {
+						closeErr := gate.Conn().Close(cleanupCtx)
+						require.NoError(t, errors.Join(err, closeErr), "release connection holding advisory lock")
+					}
 				}
-				gate.Release()
 			}()
-			f.exec(t, fmt.Sprintf(`CREATE FUNCTION test_hold_satellite() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN PERFORM pg_advisory_xact_lock(%d::bigint); RETURN NEW; END $$`, key))
-			f.exec(t, `CREATE TRIGGER test_hold_satellite BEFORE UPDATE ON chairs FOR EACH ROW EXECUTE FUNCTION test_hold_satellite()`)
+
+			testFixture.exec(
+				t,
+				fmt.Sprintf(`CREATE FUNCTION test_hold_satellite() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN PERFORM pg_advisory_xact_lock(%d::bigint); RETURN NEW; END $$`, key),
+			)
+			testFixture.exec(
+				t,
+				`CREATE TRIGGER test_hold_satellite BEFORE UPDATE ON chairs FOR EACH ROW EXECUTE FUNCTION test_hold_satellite()`,
+			)
+
 			type outcome struct {
 				result response
 				err    error
 			}
-			start := func(operation string) <-chan outcome {
-				ch := make(chan outcome, 1)
-				go func() {
-					input := object{"delete": object{"id": id}}
-					if operation == "update" {
-						input = object{"update": object{"id": id, "title": "new", "satellite": object{"chair": object{"description3": "new", "type": "cde"}}}}
-					}
-					r, err := f.request(mutate, object{"input": input})
-					ch <- outcome{result: r, err: err}
-				}()
-				return ch
+
+			inputs := map[string]object{
+				deleteOperation: {deleteOperation: object{"id": mainID}},
+				updateOperation: {
+					updateOperation: object{
+						"id":       mainID,
+						titleField: updatedValue,
+						satelliteField: object{
+							chairBranch: object{chairDescriptionField: updatedValue, typeField: chairCDE},
+						},
+					},
+				},
 			}
-			first := start(tc.first)
-			waitForDBCondition(t, ctx, f, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+			start := func(input object) <-chan outcome {
+				results := make(chan outcome, 1)
+
+				go func() {
+					reply, err := testFixture.request(t.Context(), mutate, object{inputArgument: input})
+					results <- outcome{result: reply, err: err}
+				}()
+
+				return results
+			}
+			first := start(inputs[testCase.first])
+
+			waitForDBCondition(t, ctx, testFixture, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
 WHERE datname=current_database() AND wait_event_type='Lock' AND wait_event='advisory')`)
-			second := start(tc.second)
-			waitForDBCondition(t, ctx, f, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+
+			second := start(inputs[testCase.second])
+
+			waitForDBCondition(t, ctx, testFixture, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
 WHERE datname=current_database() AND wait_event_type='Lock'
 AND wait_event IN ('transactionid','tuple') AND query LIKE '%FROM main WHERE id = $1 FOR UPDATE%')`)
-			// Neither write may be visible before the first transaction commits.
-			visible := f.list(t, object{"id": id})
-			if len(visible) != 1 {
-				t.Fatalf("uncommitted deletion visible: %v", visible)
-			}
-			visibleMain := visible[0].(map[string]any)
-			if visibleMain["title"] != "old" || satellite(visibleMain)["description3"] != "old" {
-				t.Fatalf("uncommitted partial update visible: %v", visibleMain)
-			}
+			visible := testFixture.list(t, object{"id": mainID})
+			require.Len(t, visible, 1, "uncommitted deletion visible")
+			visibleMain, validType := visible[0].(object)
+			require.True(t, validType)
+			require.Equal(t, previousValue, visibleMain[titleField])
+			require.Equal(t, previousValue, satellite(t, visibleMain)[chairDescriptionField])
+
 			var unlocked bool
-			if err := gate.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, key).Scan(&unlocked); err != nil || !unlocked {
-				t.Fatalf("release gate: unlocked=%v err=%v", unlocked, err)
-			}
+			require.NoError(t, gate.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, key).Scan(&unlocked))
+			require.True(t, unlocked)
+
 			locked = false
-			await := func(ch <-chan outcome) response {
+			await := func(results <-chan outcome) response {
 				select {
-				case result := <-ch:
-					if result.err != nil {
-						t.Fatal(result.err)
-					}
+				case result := <-results:
+					require.NoError(t, result.err)
+
 					return result.result
 				case <-ctx.Done():
-					t.Fatal("contending HTTP operation did not finish:", ctx.Err())
+					require.FailNow(t, "contending HTTP operation did not finish", "%v", ctx.Err())
+
 					return response{}
 				}
 			}
-			requireOK(t, await(first))
+			require.Empty(t, await(first).Errors)
+
 			secondResult := await(second)
-			if tc.first == "update" {
-				requireOK(t, secondResult)
-			} else if tc.second == "update" {
-				requireError(t, secondResult, "NOT_FOUND")
+			if testCase.wantCode == "" {
+				require.Empty(t, secondResult.Errors)
 			} else {
-				requireError(t, secondResult, "ALREADY_DELETED")
+				require.NotEmpty(t, secondResult.Errors)
+				require.Equal(t, testCase.wantCode, secondResult.Errors[0].Extensions["code"])
 			}
-			f.assertLink(t, m, "chairs", true)
-			if len(f.list(t, object{"id": id})) != 0 {
-				t.Fatal("deleted Main was resurrected")
-			}
+
+			testFixture.assertLink(t, main, chairsTable, true)
+			require.Empty(t, testFixture.list(t, object{"id": mainID}))
+
 			var title, description, chairType string
-			if err := f.pool.QueryRow(ctx, `SELECT m.title,c.description3,c.type::text FROM main m JOIN chairs c ON c.main_id=m.id WHERE m.id=$1`, id).Scan(&title, &description, &chairType); err != nil {
-				t.Fatal(err)
-			}
-			wantTitle, wantType := "old", "abc"
-			if tc.first == "update" {
-				wantTitle, wantType = "new", "cde"
-			}
-			if title != wantTitle || description != wantTitle || chairType != wantType {
-				t.Fatalf("partial or unexpected update: %s/%s/%s", title, description, chairType)
-			}
+			require.NoError(
+				t,
+				testFixture.pool.QueryRow(ctx, `SELECT m.title,c.description3,c.type::text
+FROM main m JOIN chairs c ON c.main_id=m.id WHERE m.id=$1`, mainID).
+					Scan(&title, &description, &chairType),
+			)
+			require.Equal(
+				t,
+				[]string{testCase.wantTitle, testCase.wantTitle, testCase.wantType},
+				[]string{title, description, chairType},
+			)
 		})
 	}
 }
 
-func waitForDBCondition(t *testing.T, ctx context.Context, f *fixture, query string) {
+func waitForDBCondition(t *testing.T, ctx context.Context, testFixture *fixture, query string) {
 	t.Helper()
+
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
+
 	for {
 		var ready bool
-		if err := f.pool.QueryRow(ctx, query).Scan(&ready); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, testFixture.pool.QueryRow(ctx, query).Scan(&ready))
+
 		if ready {
 			return
 		}
+
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			t.Fatalf("PostgreSQL lock state was not reached: %v", ctx.Err())
+			require.FailNow(t, "PostgreSQL lock state was not reached", "%v", ctx.Err())
 		}
 	}
 }
 
 func TestMutationAliasesHaveIndependentTransactions(t *testing.T) {
-	f := setup(t)
-	r := f.gql(t, `mutation {
+	testFixture := setup(t)
+	reply := testFixture.gql(t, `mutation {
  first:main(input:{create:{title:"committed first",satellite:{tool:{}}}}){main{id title} deletedId}
  second:main(input:{delete:{id:"9223372036854775807"}}){main{id} deletedId}
 }`, nil)
-	requireError(t, r, "NOT_FOUND")
-	if r.Data["second"] != nil {
-		t.Fatalf("failed mutation returned payload: %v", r.Data["second"])
-	}
-	first, ok := r.Data["first"].(map[string]any)
-	if !ok || first["main"] == nil || first["deletedId"] != nil {
-		t.Fatalf("first mutation did not return its committed payload: %v", r.Data)
-	}
-	m := first["main"].(map[string]any)
-	rows := f.list(t, object{"id": idOf(m)})
-	if len(rows) != 1 || rows[0].(map[string]any)["title"] != "committed first" {
-		t.Fatalf("a later business error rolled back a previous root mutation: %v", rows)
-	}
+	result := reply
+	require.NotEmpty(t, result.Errors)
+	require.Equal(t, "NOT_FOUND", result.Errors[0].Extensions["code"])
+	require.Nil(t, reply.Data["second"])
+	first, validType := reply.Data["first"].(map[string]any)
+	require.True(t, validType)
+	require.NotNil(t, first[mainField])
+	require.Nil(t, first[deletedIDField])
+	main, validType := first[mainField].(object)
+	require.True(t, validType)
+	rows := testFixture.list(t, object{"id": idOf(t, main)})
+	require.Len(t, rows, 1)
+	main, validType = rows[0].(object)
+	require.True(t, validType)
+	require.Equal(t, "committed first", main[titleField])
 }
 
 func TestExactDatabaseColumnsAndEnum(t *testing.T) {
-	f := setup(t)
+	testFixture := setup(t)
 	common := map[string]string{
-		"id": "bigint:NO", "created_at": "timestamp with time zone:NO",
+		"id": requiredBigint, "created_at": "timestamp with time zone:NO",
 		"update_at": "timestamp with time zone:NO", "deleted_at": "timestamp with time zone:YES",
 	}
+
 	want := map[string]map[string]string{
-		"main":   {"title": "text:NO", "sub_id": "bigint:NO", "sub_obj": "text:NO"},
-		"tools":  {"main_id": "bigint:NO", "description1": "text:YES"},
-		"tables": {"main_id": "bigint:NO", "description2": "text:YES"},
-		"chairs": {"main_id": "bigint:NO", "description3": "text:YES", "type": "USER-DEFINED:NO"},
+		mainField:   {titleField: "text:NO", "sub_id": requiredBigint, "sub_obj": "text:NO"},
+		toolsTable:  {mainIDColumn: requiredBigint, toolDescriptionField: nullableText},
+		tablesTable: {mainIDColumn: requiredBigint, tableDescriptionField: nullableText},
+		chairsTable: {mainIDColumn: requiredBigint, chairDescriptionField: nullableText, typeField: "USER-DEFINED:NO"},
 	}
 	for _, columns := range want {
-		for key, value := range common {
-			columns[key] = value
-		}
+		maps.Copy(columns, common)
 	}
-	rows, err := f.pool.Query(context.Background(), `SELECT table_name,column_name,data_type,is_nullable
+
+	rows, err := testFixture.pool.Query(t.Context(), `SELECT table_name,column_name,data_type,is_nullable
 FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('main','tools','tables','chairs')`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
+	defer rows.Close()
+
 	got := make(map[string]map[string]string)
+
 	for rows.Next() {
 		var table, column, kind, nullable string
-		if err := rows.Scan(&table, &column, &kind, &nullable); err != nil {
-			rows.Close()
-			t.Fatal(err)
-		}
+		require.NoError(t, rows.Scan(&table, &column, &kind, &nullable))
+
 		if got[table] == nil {
 			got[table] = make(map[string]string)
 		}
+
 		got[table][column] = kind + ":" + nullable
 	}
+
 	rows.Close()
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("database columns differ from the required contract\nwant=%v\ngot=%v", want, got)
-	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, want, got)
+
 	var enumValues []string
-	if err := f.pool.QueryRow(context.Background(), `SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+	require.NoError(
+		t,
+		testFixture.pool.QueryRow(t.Context(), `SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
 FROM pg_enum e JOIN pg_attribute a ON a.atttypid=e.enumtypid
-WHERE a.attrelid='chairs'::regclass AND a.attname='type'`).Scan(&enumValues); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(enumValues, []string{"abc", "cde"}) {
-		t.Fatalf("chairs.type must be PostgreSQL enum abc,cde: %v", enumValues)
-	}
+WHERE a.attrelid='chairs'::regclass AND a.attname='type'`).Scan(&enumValues),
+	)
+	require.Equal(t, []string{chairABC, chairCDE}, enumValues)
 }
