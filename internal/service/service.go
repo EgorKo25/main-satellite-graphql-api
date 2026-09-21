@@ -64,9 +64,10 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*domain.Main, 
 }
 
 func (s *Service) create(ctx context.Context, transaction pgx.Tx, input CreateInput) (*domain.Main, error) {
-	main := &domain.Main{Title: input.Title}
-
-	var metadata *domain.Satellite
+	var (
+		main     = &domain.Main{Title: input.Title}
+		metadata *domain.Satellite
+	)
 
 	switch {
 	case input.Satellite.Tool != nil:
@@ -138,7 +139,7 @@ func (s *Service) Update(ctx context.Context, input UpdateInput) (*domain.Main, 
 	}
 
 	if input.SatelliteSet {
-		if err := s.store.UpdateSatellite(ctx, transaction, main.Satellite, now); err != nil {
+		if err := s.store.UpdateSatellite(ctx, transaction, main, now); err != nil {
 			return nil, fmt.Errorf("update satellite: %w", err)
 		}
 	}
@@ -237,7 +238,7 @@ func (s *Service) delete(ctx context.Context, transaction pgx.Tx, mainID int64) 
 		return fmt.Errorf("soft delete Main: %w", err)
 	}
 
-	if err := s.store.DeleteSatellite(ctx, transaction, main.Satellite, now); err != nil {
+	if err := s.store.DeleteSatellite(ctx, transaction, main, now); err != nil {
 		return fmt.Errorf("soft delete satellite: %w", err)
 	}
 

@@ -85,10 +85,17 @@ linters:
       - path: '^tests/integration/'
         linters:
           - paralleltest
+      # Concrete satellite SQL and fields differ; keep explicit typed handlers.
+      - path: '^internal/postgres/(tool|table|chair)\.go$'
+        linters:
+          - dupl
   settings:
     cyclop:
       max-complexity: 10
       package-average: 0.0
+    varnamelen:
+      ignore-decls:
+        - tx pgx.Tx
     revive:
       severity: error
       rules:
