@@ -1,6 +1,6 @@
 //go:build integration
 
-package postgres_test
+package integrationtests_test
 
 import (
 	"context"
@@ -92,7 +92,7 @@ func setupDatabase(t *testing.T) (*postgres.DB, *pgxpool.Pool) {
 
 	t.Cleanup(func() { require.NoError(t, migrationDB.Close()) })
 
-	migrations, err := goose.NewProvider(goose.DialectPostgres, migrationDB, os.DirFS("../../migrations"))
+	migrations, err := goose.NewProvider(goose.DialectPostgres, migrationDB, os.DirFS("../../../migrations"))
 	require.NoError(t, err)
 
 	_, err = migrations.Up(ctx)
