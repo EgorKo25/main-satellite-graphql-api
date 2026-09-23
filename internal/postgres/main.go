@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
-	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
@@ -81,37 +79,4 @@ FROM main WHERE id = $1 FOR UPDATE`, mainID).Scan(
 	}
 
 	return &main, nil
-}
-
-func (db *DB) insertMain(ctx context.Context, transaction pgx.Tx, main *domain.Main) (int64, error) {
-	var mainID int64
-
-	if err := transaction.QueryRow(ctx, `INSERT INTO main (title, sub_id, sub_obj, created_at, update_at)
-VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		main.Title, main.SubID, main.SubObj, main.CreatedAt, main.UpdatedAt).Scan(&mainID); err != nil {
-		return 0, fmt.Errorf("insert main: %w", err)
-	}
-
-	return mainID, nil
-}
-
-func (db *DB) updateMain(
-	ctx context.Context,
-	transaction pgx.Tx,
-	mainID int64,
-	title graphql.Omittable[*string],
-	now time.Time,
-) error {
-	tag, err := transaction.Exec(ctx, `UPDATE main
-SET title = CASE WHEN $2::boolean THEN $3::text ELSE title END, update_at = $4
-WHERE id = $1 AND deleted_at IS NULL`, mainID, title.IsSet(), title.Value(), now)
-
-	return exactlyOne(tag, err)
-}
-
-func (db *DB) deleteMain(ctx context.Context, transaction pgx.Tx, mainID int64, now time.Time) error {
-	tag, err := transaction.Exec(ctx, `UPDATE main SET deleted_at = $2, update_at = $2
-WHERE id = $1 AND deleted_at IS NULL`, mainID, now)
-
-	return exactlyOne(tag, err)
 }

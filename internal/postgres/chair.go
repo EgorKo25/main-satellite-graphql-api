@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -11,11 +10,7 @@ import (
 )
 
 func (db *DB) CreateChair(ctx context.Context, title string, input ChairCreate) (*domain.Main, error) {
-	if err := input.Validate(); err != nil {
-		return nil, err
-	}
-
-	return db.create(ctx, title, domain.Chairs, db.nextChairID, func(tx pgx.Tx, main *domain.Main) error {
+	return db.create(ctx, title, domain.Chairs, func(tx pgx.Tx, main *domain.Main) error {
 		tag, err := tx.Exec(ctx, `INSERT INTO chairs (id, main_id, description3, type, created_at, update_at)
 VALUES ($1, $2, $3, $4, $5, $5)`, main.SubID, main.ID, input.Description3, input.Type, main.CreatedAt)
 
@@ -44,16 +39,6 @@ WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`,
 
 		return exactlyOne(tag, err)
 	})
-}
-
-func (db *DB) nextChairID(ctx context.Context, tx pgx.Tx) (int64, error) {
-	var subID int64
-
-	if err := tx.QueryRow(ctx, `SELECT nextval(pg_get_serial_sequence('chairs', 'id'))`).Scan(&subID); err != nil {
-		return 0, fmt.Errorf("allocate chair ID: %w", err)
-	}
-
-	return subID, nil
 }
 
 func (db *DB) deleteChair(ctx context.Context, tx pgx.Tx, main *domain.Main, now time.Time) error {

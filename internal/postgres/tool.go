@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -11,7 +10,7 @@ import (
 )
 
 func (db *DB) CreateTool(ctx context.Context, title string, input ToolCreate) (*domain.Main, error) {
-	return db.create(ctx, title, domain.Tools, db.nextToolID, func(tx pgx.Tx, main *domain.Main) error {
+	return db.create(ctx, title, domain.Tools, func(tx pgx.Tx, main *domain.Main) error {
 		tag, err := tx.Exec(ctx, `INSERT INTO tools (id, main_id, description1, created_at, update_at)
 VALUES ($1, $2, $3, $4, $4)`, main.SubID, main.ID, input.Description1, main.CreatedAt)
 
@@ -36,16 +35,6 @@ WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`,
 
 		return exactlyOne(tag, err)
 	})
-}
-
-func (db *DB) nextToolID(ctx context.Context, tx pgx.Tx) (int64, error) {
-	var subID int64
-
-	if err := tx.QueryRow(ctx, `SELECT nextval(pg_get_serial_sequence('tools', 'id'))`).Scan(&subID); err != nil {
-		return 0, fmt.Errorf("allocate tool ID: %w", err)
-	}
-
-	return subID, nil
 }
 
 func (db *DB) deleteTool(ctx context.Context, tx pgx.Tx, main *domain.Main, now time.Time) error {

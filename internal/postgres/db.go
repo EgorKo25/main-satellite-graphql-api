@@ -54,22 +54,3 @@ type DB struct {
 func (db *DB) Close() {
 	db.pool.Close()
 }
-
-func (db *DB) begin(ctx context.Context) (pgx.Tx, error) {
-	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return nil, fmt.Errorf("begin transaction: %w", err)
-	}
-
-	return transaction, nil
-}
-
-func (db *DB) now(ctx context.Context, transaction pgx.Tx) (time.Time, error) {
-	var now time.Time
-
-	if err := transaction.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-		return time.Time{}, fmt.Errorf("read database time: %w", err)
-	}
-
-	return now.UTC(), nil
-}

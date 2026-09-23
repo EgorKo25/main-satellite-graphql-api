@@ -47,7 +47,7 @@ func (s nullableSatellite) domainObject(main *domain.Main) (domain.SubObject, er
 	case domain.Tables:
 		return &domain.Table{Satellite: satellite, Description2: s.description}, nil
 	case domain.Chairs:
-		if s.typeName == nil || (*s.typeName != string(domain.ABC) && *s.typeName != string(domain.CDE)) {
+		if s.typeName == nil {
 			return nil, fmt.Errorf("main %d has an invalid chair type", main.ID)
 		}
 
