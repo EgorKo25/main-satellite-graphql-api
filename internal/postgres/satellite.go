@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func (s *Store) NextSatelliteID(ctx context.Context, transaction pgx.Tx, kind domain.Kind) (int64, error) {
+func (s *DB) NextSatelliteID(ctx context.Context, transaction pgx.Tx, kind domain.Kind) (int64, error) {
 	handler, ok := s.handlers[kind]
 	if !ok {
 		return 0, fmt.Errorf("allocate satellite ID: unknown satellite kind %q", kind)
@@ -19,7 +19,7 @@ func (s *Store) NextSatelliteID(ctx context.Context, transaction pgx.Tx, kind do
 	return handler.nextID(ctx, transaction)
 }
 
-func (s *Store) LockSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main) (*domain.Main, error) {
+func (s *DB) LockSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main) (*domain.Main, error) {
 	handler, ok := s.handlers[main.SubObj]
 	if !ok {
 		return nil, fmt.Errorf("lock satellite: unknown satellite kind %q", main.SubObj)
@@ -32,7 +32,7 @@ func (s *Store) LockSatellite(ctx context.Context, transaction pgx.Tx, main *dom
 	return s.ReadTx(ctx, transaction, main.ID)
 }
 
-func (s *Store) InsertSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main) error {
+func (s *DB) InsertSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main) error {
 	handler, ok := s.handlers[main.SubObj]
 	if !ok {
 		return fmt.Errorf("insert satellite: unknown satellite kind %q", main.SubObj)
@@ -41,7 +41,7 @@ func (s *Store) InsertSatellite(ctx context.Context, transaction pgx.Tx, main *d
 	return handler.create(ctx, transaction, main)
 }
 
-func (s *Store) UpdateSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main, now time.Time) error {
+func (s *DB) UpdateSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main, now time.Time) error {
 	handler, ok := s.handlers[main.SubObj]
 	if !ok {
 		return fmt.Errorf("update satellite: unknown satellite kind %q", main.SubObj)
@@ -50,7 +50,7 @@ func (s *Store) UpdateSatellite(ctx context.Context, transaction pgx.Tx, main *d
 	return handler.update(ctx, transaction, main, now)
 }
 
-func (s *Store) DeleteSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main, now time.Time) error {
+func (s *DB) DeleteSatellite(ctx context.Context, transaction pgx.Tx, main *domain.Main, now time.Time) error {
 	handler, ok := s.handlers[main.SubObj]
 	if !ok {
 		return fmt.Errorf("delete satellite: unknown satellite kind %q", main.SubObj)
