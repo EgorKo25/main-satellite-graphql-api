@@ -1,0 +1,14 @@
+database:
+  # Перед запуском задайте DATABASE_URL в окружении.
+  url: ""
+  connect_timeout: 5s
+  max_conns: 10
+  min_conns: 0
+http:
+  addr: "0.0.0.0:8080"
+  request_timeout: 10s
+  read_header_timeout: 5s
+  read_timeout: 10s
+  write_timeout: 15s
+  idle_timeout: 1m
+  shutdown_timeout: 15s

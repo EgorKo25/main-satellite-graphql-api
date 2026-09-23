@@ -1,0 +1,61 @@
+schema:
+  - internal/graph/schema.graphqls
+exec:
+  filename: internal/graph/generated/generated.go
+  package: generated
+model:
+  filename: internal/graph/model/models_gen.go
+  package: model
+resolver:
+  layout: follow-schema
+  dir: internal/graph
+  package: graph
+  filename_template: "{name}.resolvers.go"
+  preserve_resolver: true
+  omit_template_comment: true
+nullable_input_omittable: true
+models:
+  Int:
+    model: github.com/99designs/gqlgen/graphql.Int32
+  ID:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/graph/scalar.ID
+  Time:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/graph/scalar.Time
+  Main:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.Main
+  Tool:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.Tool
+  Table:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.Table
+  Chair:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.Chair
+  Satellite:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.SubObject
+  ChairType:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.ChairType
+    enum_values:
+      abc:
+        value: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.ABC
+      cde:
+        value: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.CDE
+  ToolCreateInput:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ToolCreate
+    fields:
+      description1:
+        omittable: false
+  TableCreateInput:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.TableCreate
+    fields:
+      description2:
+        omittable: false
+  ChairCreateInput:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ChairCreate
+    fields:
+      description3:
+        omittable: false
+  ToolUpdateInput:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ToolUpdate
+  TableUpdateInput:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.TableUpdate
+  ChairUpdateInput:
+    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ChairUpdate
