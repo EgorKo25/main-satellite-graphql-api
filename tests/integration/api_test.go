@@ -23,6 +23,7 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
+	integrationtests "github.com/EgorKo25/main-satellite-graphql-api/internal/postgres/integration_tests"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,13 +76,36 @@ const (
 	requiredBigint        = "bigint:NO"
 )
 
+var testDatabaseURL string
+
 func TestMain(main *testing.M) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		slog.Error("set migration dialect", "error", err)
 		os.Exit(1)
 	}
 
-	os.Exit(main.Run())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	server, err := integrationtests.New(ctx)
+
+	cancel()
+
+	if err != nil {
+		slog.Error("start test PostgreSQL", "error", err)
+		os.Exit(1)
+	}
+
+	testDatabaseURL = server.URL
+	exitCode := main.Run()
+	cleanupCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
+
+	if err = server.Close(cleanupCtx); err != nil {
+		slog.Error("remove test PostgreSQL", "error", err)
+
+		exitCode = 1
+	}
+
+	done()
+	os.Exit(exitCode)
 }
 
 const fields = `id title createdAt updatedAt deletedAt satellite {
@@ -106,17 +130,10 @@ type response struct {
 func setup(t *testing.T) *fixture {
 	t.Helper()
 
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	require.NotEmpty(
-		t,
-		dsn,
-		"integration tests require TEST_DATABASE_URL pointing to a dedicated PostgreSQL test instance",
-	)
-
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, dsn)
+	admin, err := pgx.Connect(ctx, testDatabaseURL)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		cleanupCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
@@ -137,18 +154,11 @@ func setup(t *testing.T) *fixture {
 		require.NoError(t, err, "drop owned test database")
 	})
 
-	testDSN := dsn + " dbname=" + name
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		parsed, parseErr := url.Parse(dsn)
-		require.NoError(t, parseErr)
+	parsed, err := url.Parse(testDatabaseURL)
+	require.NoError(t, err)
 
-		parsed.Path = "/" + name
-		query := parsed.Query()
-		query.Del("database")
-		query.Del("dbname")
-		parsed.RawQuery = query.Encode()
-		testDSN = parsed.String()
-	}
+	parsed.Path = "/" + name
+	testDSN := parsed.String()
 
 	cfg, err := pgxpool.ParseConfig(testDSN)
 	require.NoError(t, err)

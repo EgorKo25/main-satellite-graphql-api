@@ -54,33 +54,18 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 20s
 
-  test-db:
-    image: postgres:17.9-bookworm
-    profiles: ["test"]
-    environment:
-      POSTGRES_USER: graphql_test
-      POSTGRES_PASSWORD: graphql_test
-      POSTGRES_DB: postgres
-    ports:
-      - "127.0.0.1:${TEST_DB_PORT:-5433}:5432"
-    tmpfs:
-      - /var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U graphql_test -d postgres"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-
   test:
     profiles: ["test"]
     build:
       context: .
       target: test
     environment:
-      TEST_DATABASE_URL: postgres://graphql_test:graphql_test@test-db:5432/postgres?sslmode=disable
-    depends_on:
-      test-db:
-        condition: service_healthy
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKERTEST_HOST: host.docker.internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres-data:
