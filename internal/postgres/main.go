@@ -14,17 +14,19 @@ func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error)
 		return nil, err
 	}
 
-	rows, err := db.pool.Query(ctx, `SELECT
-    m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
-    t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
-    b.id, b.main_id, b.description2, b.created_at, b.update_at, b.deleted_at,
-    c.id, c.main_id, c.description3, c.type::text, c.created_at, c.update_at, c.deleted_at
-FROM main m
-LEFT JOIN tools t ON t.main_id = m.id
-LEFT JOIN tables b ON b.main_id = m.id
-LEFT JOIN chairs c ON c.main_id = m.id
-WHERE m.deleted_at IS NULL AND ($1::bigint IS NULL OR m.id = $1)
-ORDER BY m.id ASC LIMIT $2 OFFSET $3`, input.ID, input.Limit, input.Offset)
+	rows, err := db.pool.Query(ctx, `
+	    SELECT
+	        m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
+	        t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
+	        b.id, b.main_id, b.description2, b.created_at, b.update_at, b.deleted_at,
+	        c.id, c.main_id, c.description3, c.type::text, c.created_at, c.update_at, c.deleted_at
+	    FROM main m
+	    LEFT JOIN tools t ON t.main_id = m.id
+	    LEFT JOIN tables b ON b.main_id = m.id
+	    LEFT JOIN chairs c ON c.main_id = m.id
+	    WHERE m.deleted_at IS NULL AND ($1::bigint IS NULL OR m.id = $1)
+	    ORDER BY m.id ASC LIMIT $2 OFFSET $3;
+	`, input.ID, input.Limit, input.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("query Main list: %w", err)
 	}
@@ -51,23 +53,27 @@ ORDER BY m.id ASC LIMIT $2 OFFSET $3`, input.ID, input.Limit, input.Offset)
 }
 
 func (db *DB) readTx(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
-	return scanAggregate(transaction.QueryRow(ctx, `SELECT
-    m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
-    t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
-    b.id, b.main_id, b.description2, b.created_at, b.update_at, b.deleted_at,
-    c.id, c.main_id, c.description3, c.type::text, c.created_at, c.update_at, c.deleted_at
-FROM main m
-LEFT JOIN tools t ON t.main_id = m.id
-LEFT JOIN tables b ON b.main_id = m.id
-LEFT JOIN chairs c ON c.main_id = m.id
-WHERE m.id = $1`, mainID))
+	return scanAggregate(transaction.QueryRow(ctx, `
+	    SELECT
+	        m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
+	        t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
+	        b.id, b.main_id, b.description2, b.created_at, b.update_at, b.deleted_at,
+	        c.id, c.main_id, c.description3, c.type::text, c.created_at, c.update_at, c.deleted_at
+	    FROM main m
+	    LEFT JOIN tools t ON t.main_id = m.id
+	    LEFT JOIN tables b ON b.main_id = m.id
+	    LEFT JOIN chairs c ON c.main_id = m.id
+	    WHERE m.id = $1;
+	`, mainID))
 }
 
 func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
 	var main domain.Main
 
-	err := transaction.QueryRow(ctx, `SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
-FROM main WHERE id = $1 FOR UPDATE`, mainID).Scan(
+	err := transaction.QueryRow(ctx, `
+	    SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
+	    FROM main WHERE id = $1 FOR UPDATE;
+	`, mainID).Scan(
 		&main.ID, &main.Title, &main.SubID, &main.SubObj, &main.CreatedAt, &main.UpdatedAt, &main.DeletedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
