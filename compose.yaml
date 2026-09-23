@@ -1,0 +1,86 @@
+name: main-satellite-graphql
+
+services:
+  db:
+    image: postgres:17.9-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-graphql}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-graphql_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-graphql}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    image: main-satellite-graphql-api:local
+    build:
+      context: .
+      target: runtime
+    working_dir: /migrations
+    command: ["/goose", "-env=none", "-dir", ".", "-timeout", "${MIGRATION_TIMEOUT:-1m}", "up"]
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-graphql}:${POSTGRES_PASSWORD:-graphql_dev}@db:5432/${POSTGRES_DB:-graphql}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: main-satellite-graphql-api:local
+    build:
+      context: .
+      target: runtime
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-graphql}:${POSTGRES_PASSWORD:-graphql_dev}@db:5432/${POSTGRES_DB:-graphql}?sslmode=disable
+      CONFIG_PATH: /config.yaml
+    volumes:
+      - type: bind
+        source: ${CONFIG_PATH:-./config.example.yaml}
+        target: /config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 20s
+
+  test-db:
+    image: postgres:17.9-bookworm
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: graphql_test
+      POSTGRES_PASSWORD: graphql_test
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:${TEST_DB_PORT:-5433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graphql_test -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgres://graphql_test:graphql_test@test-db:5432/postgres?sslmode=disable
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
