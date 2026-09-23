@@ -1,0 +1,114 @@
+scalar Time
+
+enum ChairType {
+  abc
+  cde
+}
+
+union Satellite = Tool | Table | Chair
+
+type Main {
+  id: ID!
+  title: String!
+  satellite: Satellite!
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
+}
+
+type Tool {
+  id: ID!
+  description1: String
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
+}
+
+type Table {
+  id: ID!
+  description2: String
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
+}
+
+type Chair {
+  id: ID!
+  description3: String
+  type: ChairType!
+  createdAt: Time!
+  updatedAt: Time!
+  deletedAt: Time
+}
+
+type Query {
+  main(id: ID, limit: Int! = 20, offset: Int! = 0): [Main!]!
+}
+
+type Mutation {
+  main(input: MainMutationInput!): MainMutationPayload
+}
+
+input MainMutationInput @oneOf {
+  create: MainCreateInput
+  update: MainUpdateInput
+  delete: MainDeleteInput
+}
+
+input MainCreateInput {
+  title: String!
+  satellite: SatelliteCreateInput!
+}
+
+input SatelliteCreateInput @oneOf {
+  tool: ToolCreateInput
+  table: TableCreateInput
+  chair: ChairCreateInput
+}
+
+input ToolCreateInput {
+  description1: String
+}
+
+input TableCreateInput {
+  description2: String
+}
+
+input ChairCreateInput {
+  description3: String
+  type: ChairType!
+}
+
+input MainUpdateInput {
+  id: ID!
+  title: String
+  satellite: SatelliteUpdateInput
+}
+
+input SatelliteUpdateInput @oneOf {
+  tool: ToolUpdateInput
+  table: TableUpdateInput
+  chair: ChairUpdateInput
+}
+
+input ToolUpdateInput {
+  description1: String
+}
+
+input TableUpdateInput {
+  description2: String
+}
+
+input ChairUpdateInput {
+  description3: String
+  type: ChairType
+}
+
+input MainDeleteInput {
+  id: ID!
+}
+
+type MainMutationPayload {
+  main: Main
+  deletedId: ID
+}
