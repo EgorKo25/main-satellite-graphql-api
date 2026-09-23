@@ -1,7 +1,6 @@
 package postgres_test
 
 import (
-	"math"
 	"testing"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -20,42 +19,10 @@ func TestListInputValidate(t *testing.T) {
 	}{
 		{name: "minimum", input: postgres.ListInput{Limit: 1}},
 		{name: "maximum", input: postgres.ListInput{Limit: 100, Offset: 100}},
-		{name: "id filter", input: postgres.ListInput{ID: new(int64(1)), Limit: 20}},
-		{name: "maximum id", input: postgres.ListInput{ID: new(int64(math.MaxInt64)), Limit: 20}},
 		{name: "zero limit", input: postgres.ListInput{}, wantErr: postgres.ErrInvalidInput},
 		{name: "negative limit", input: postgres.ListInput{Limit: -1}, wantErr: postgres.ErrInvalidInput},
 		{name: "large limit", input: postgres.ListInput{Limit: 101}, wantErr: postgres.ErrInvalidInput},
 		{name: "negative offset", input: postgres.ListInput{Limit: 20, Offset: -1}, wantErr: postgres.ErrInvalidInput},
-		{name: "zero id", input: postgres.ListInput{ID: new(int64(0)), Limit: 20}, wantErr: postgres.ErrInvalidInput},
-		{
-			name:    "negative id",
-			input:   postgres.ListInput{ID: new(int64(-1)), Limit: 20},
-			wantErr: postgres.ErrInvalidInput,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			require.ErrorIs(t, test.input.Validate(), test.wantErr)
-		})
-	}
-}
-
-func TestChairCreateValidate(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		input   postgres.ChairCreate
-		wantErr error
-	}{
-		{name: "abc without description", input: postgres.ChairCreate{Type: domain.ABC}},
-		{name: "cde without description", input: postgres.ChairCreate{Type: domain.CDE}},
-		{name: "empty description", input: postgres.ChairCreate{Type: domain.ABC, Description3: new("")}},
-		{name: "missing type", wantErr: postgres.ErrInvalidInput},
-		{name: "uppercase type", input: postgres.ChairCreate{Type: "ABC"}, wantErr: postgres.ErrInvalidInput},
-		{name: "unknown type", input: postgres.ChairCreate{Type: "xyz"}, wantErr: postgres.ErrInvalidInput},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -106,9 +73,6 @@ func TestChairTypeUpdateValidate(t *testing.T) {
 		{name: "abc", chairType: new(domain.ABC)},
 		{name: "cde", chairType: new(domain.CDE)},
 		{name: "null", wantErr: postgres.ErrInvalidInput},
-		{name: "empty", chairType: new(domain.ChairType("")), wantErr: postgres.ErrInvalidInput},
-		{name: "uppercase", chairType: new(domain.ChairType("ABC")), wantErr: postgres.ErrInvalidInput},
-		{name: "unknown", chairType: new(domain.ChairType("xyz")), wantErr: postgres.ErrInvalidInput},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

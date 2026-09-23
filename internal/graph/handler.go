@@ -24,10 +24,6 @@ const (
 )
 
 func NewHandler(database mainDatabase, logger *slog.Logger) http.Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	configuration := generated.Config{Resolvers: &Resolver{database: database}}
 	configuration.Complexity.Query.Main = func(childComplexity int, _ *int64, limit, _ int32) int {
 		if limit < 1 || limit > 100 {

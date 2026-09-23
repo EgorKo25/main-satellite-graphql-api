@@ -18,9 +18,9 @@ var (
 )
 
 type ListInput struct {
-	ID     *int64 `validate:"omitnil,gt=0"`
-	Limit  int    `validate:"gte=1,lte=100"`
-	Offset int    `validate:"gte=0"`
+	ID     *int64
+	Limit  int `validate:"gte=1,lte=100"`
+	Offset int `validate:"gte=0"`
 }
 
 func (input ListInput) Validate() error {
@@ -41,15 +41,7 @@ type TableCreate struct {
 
 type ChairCreate struct {
 	Description3 *string
-	Type         domain.ChairType `validate:"oneof=abc cde"`
-}
-
-func (input ChairCreate) Validate() error {
-	if err := inputValidator.Struct(input); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
-	}
-
-	return nil
+	Type         domain.ChairType
 }
 
 type ToolUpdate struct {
@@ -87,7 +79,7 @@ func (input ChairUpdate) Validate() error {
 	}
 
 	if input.Type.IsSet() {
-		if err := inputValidator.Var(input.Type.Value(), "required,oneof=abc cde"); err != nil {
+		if err := inputValidator.Var(input.Type.Value(), "required"); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidInput, err)
 		}
 	}

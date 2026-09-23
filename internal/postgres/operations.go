@@ -16,32 +16,21 @@ func (db *DB) create(
 	ctx context.Context,
 	title string,
 	kind domain.Kind,
-	nextID func(context.Context, pgx.Tx) (int64, error),
 	insert func(pgx.Tx, *domain.Main) error,
 ) (*domain.Main, error) {
-	transaction, err := db.begin(ctx)
+	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin create: %w", err)
 	}
 	defer db.rollback(ctx, transaction)
 
-	main := &domain.Main{Title: title, SubObj: kind}
-
-	main.SubID, err = nextID(ctx, transaction)
-	if err != nil {
-		return nil, err
-	}
-
-	main.CreatedAt, err = db.now(ctx, transaction)
-	if err != nil {
-		return nil, err
-	}
-
+	main := &domain.Main{Title: title, SubObj: kind, CreatedAt: time.Now().UTC()}
 	main.UpdatedAt = main.CreatedAt
 
-	main.ID, err = db.insertMain(ctx, transaction, main)
-	if err != nil {
-		return nil, err
+	if err = transaction.QueryRow(ctx, `INSERT INTO main (title, sub_id, sub_obj, created_at, update_at)
+VALUES ($1, nextval(pg_get_serial_sequence($2, 'id')), $2, $3, $3) RETURNING id, sub_id`,
+		main.Title, string(kind), main.CreatedAt).Scan(&main.ID, &main.SubID); err != nil {
+		return nil, fmt.Errorf("insert Main: %w", err)
 	}
 
 	if err = insert(transaction, main); err != nil {
@@ -79,17 +68,13 @@ func (db *DB) update(
 	kind domain.Kind,
 	apply func(pgx.Tx, *domain.Main, time.Time) error,
 ) (*domain.Main, error) {
-	if err := inputValidator.Var(mainID, "gt=0"); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidInput, err)
-	}
-
 	if title.IsSet() && title.Value() == nil {
 		return nil, fmt.Errorf("%w: title cannot be null", ErrInvalidInput)
 	}
 
-	transaction, err := db.begin(ctx)
+	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin update: %w", err)
 	}
 	defer db.rollback(ctx, transaction)
 
@@ -126,12 +111,12 @@ func (db *DB) applyUpdate(
 		return nil, ErrSatelliteTypeMismatch
 	}
 
-	now, err := db.now(ctx, transaction)
-	if err != nil {
-		return nil, err
-	}
+	now := time.Now().UTC()
 
-	if err = db.updateMain(ctx, transaction, main.ID, title, now); err != nil {
+	tag, err := transaction.Exec(ctx, `UPDATE main
+SET title = CASE WHEN $2::boolean THEN $3::text ELSE title END, update_at = $4
+WHERE id = $1 AND deleted_at IS NULL`, main.ID, title.IsSet(), title.Value(), now)
+	if err = exactlyOne(tag, err); err != nil {
 		return nil, fmt.Errorf("update Main: %w", err)
 	}
 
@@ -145,28 +130,12 @@ func (db *DB) applyUpdate(
 }
 
 func (db *DB) Delete(ctx context.Context, mainID int64) error {
-	if err := inputValidator.Var(mainID, "gt=0"); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
-	}
-
-	transaction, err := db.begin(ctx)
+	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return err
+		return fmt.Errorf("begin delete: %w", err)
 	}
 	defer db.rollback(ctx, transaction)
 
-	if err = db.delete(ctx, transaction, mainID); err != nil {
-		return err
-	}
-
-	if err = transaction.Commit(ctx); err != nil {
-		return fmt.Errorf("commit delete: %w", err)
-	}
-
-	return nil
-}
-
-func (db *DB) delete(ctx context.Context, transaction pgx.Tx, mainID int64) error {
 	main, err := db.lockMain(ctx, transaction, mainID)
 	if err != nil {
 		return err
@@ -181,12 +150,11 @@ func (db *DB) delete(ctx context.Context, transaction pgx.Tx, mainID int64) erro
 		return fmt.Errorf("delete satellite: unknown satellite kind %q", main.SubObj)
 	}
 
-	now, err := db.now(ctx, transaction)
-	if err != nil {
-		return err
-	}
+	now := time.Now().UTC()
 
-	if err = db.deleteMain(ctx, transaction, main.ID, now); err != nil {
+	tag, err := transaction.Exec(ctx, `UPDATE main SET deleted_at = $2, update_at = $2
+WHERE id = $1 AND deleted_at IS NULL`, main.ID, now)
+	if err = exactlyOne(tag, err); err != nil {
 		return fmt.Errorf("delete Main: %w", err)
 	}
 
@@ -196,6 +164,10 @@ func (db *DB) delete(ctx context.Context, transaction pgx.Tx, mainID int64) erro
 
 	if _, err = db.readTx(ctx, transaction, main.ID); err != nil {
 		return err
+	}
+
+	if err = transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete: %w", err)
 	}
 
 	return nil

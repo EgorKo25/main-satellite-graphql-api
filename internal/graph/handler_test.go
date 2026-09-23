@@ -385,6 +385,8 @@ func TestPatchVariablePresence(t *testing.T) {
 func TestGraphQLValidationRejectsBeforeService(t *testing.T) {
 	t.Parallel()
 
+	const mutationWithVariables = `mutation($input:MainMutationInput!){main(input:$input){main{id}}}`
+
 	tests := []struct {
 		name, query string
 		variables   map[string]any
@@ -400,8 +402,20 @@ func TestGraphQLValidationRejectsBeforeService(t *testing.T) {
 			query: `mutation{main(input:{create:{title:"x",satellite:{chair:{type:null}}}}){deletedId}}`,
 		},
 		{
-			name:  "invalid enum",
+			name:  "create unknown enum literal",
 			query: `mutation{main(input:{create:{title:"x",satellite:{chair:{type:invalid}}}}){deletedId}}`,
+		},
+		{
+			name:  "create uppercase enum literal",
+			query: `mutation{main(input:{create:{title:"x",satellite:{chair:{type:ABC}}}}){deletedId}}`,
+		},
+		{
+			name:  "update unknown enum literal",
+			query: `mutation{main(input:{update:{id:"1",satellite:{chair:{type:invalid}}}}){main{id}}}`,
+		},
+		{
+			name:  "update uppercase enum literal",
+			query: `mutation{main(input:{update:{id:"1",satellite:{chair:{type:ABC}}}}){main{id}}}`,
 		},
 		{name: "foreign id", query: `mutation{main(input:{create:{id:"1",title:"x",satellite:{tool:{}}}}){deletedId}}`},
 		{name: "sub id", query: `mutation{main(input:{create:{title:"x",sub_id:"1",satellite:{tool:{}}}}){deletedId}}`},
@@ -421,9 +435,24 @@ func TestGraphQLValidationRejectsBeforeService(t *testing.T) {
 		},
 		{name: "integer overflow literal", query: `{main(offset:2147483648){id}}`},
 		{
-			name:      "case sensitive enum",
-			query:     `mutation($input:MainMutationInput!){main(input:$input){main{id}}}`,
+			name:      "create uppercase enum variable",
+			query:     mutationWithVariables,
 			variables: jsonObject(t, `{"input":{"create":{"title":"x","satellite":{"chair":{"type":"ABC"}}}}}`),
+		},
+		{
+			name:      "create unknown enum variable",
+			query:     mutationWithVariables,
+			variables: jsonObject(t, `{"input":{"create":{"title":"x","satellite":{"chair":{"type":"invalid"}}}}}`),
+		},
+		{
+			name:      "update uppercase enum variable",
+			query:     mutationWithVariables,
+			variables: jsonObject(t, `{"input":{"update":{"id":"1","satellite":{"chair":{"type":"ABC"}}}}}`),
+		},
+		{
+			name:      "update unknown enum variable",
+			query:     mutationWithVariables,
+			variables: jsonObject(t, `{"input":{"update":{"id":"1","satellite":{"chair":{"type":"invalid"}}}}}`),
 		},
 	}
 	for _, test := range tests {
@@ -468,14 +497,60 @@ func TestDatabaseErrorsArePresented(t *testing.T) {
 func TestInvalidIDFormats(t *testing.T) {
 	t.Parallel()
 
-	for _, id := range []string{"", "-1", "+1", "1.5", "1e2", " 1", "1 ", "x", "9223372036854775808"} {
-		t.Run(id, func(t *testing.T) {
-			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
-			result := requestGraphQL(t, testHandler(mock), `query($id:ID){main(id:$id){id}}`, map[string]any{"id": id})
-			require.Len(t, result.Errors, 1)
-			require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
-		})
+	var (
+		operations = []struct {
+			name, literal, variable string
+		}{
+			{
+				name:     "query",
+				literal:  `{main(id:%q){id}}`,
+				variable: `query($id:ID){main(id:$id){id}}`,
+			},
+			{
+				name:     "update Main",
+				literal:  `mutation{main(input:{update:{id:%q,title:"x"}}){main{id}}}`,
+				variable: `mutation($id:ID!){main(input:{update:{id:$id,title:"x"}}){main{id}}}`,
+			},
+			{
+				name:     "delete Main",
+				literal:  `mutation{main(input:{delete:{id:%q}}){deletedId}}`,
+				variable: `mutation($id:ID!){main(input:{delete:{id:$id}}){deletedId}}`,
+			},
+		}
+		identifiers = []struct {
+			name, value string
+		}{
+			{name: "empty", value: ""},
+			{name: "zero", value: "0"},
+			{name: "negative", value: "-1"},
+			{name: "plus sign", value: "+1"},
+			{name: "fraction", value: "1.5"},
+			{name: "exponent", value: "1e2"},
+			{name: "leading space", value: " 1"},
+			{name: "trailing space", value: "1 "},
+			{name: "nondecimal", value: "x"},
+			{name: "overflow", value: "9223372036854775808"},
+		}
+	)
+	for _, operation := range operations {
+		for _, identifier := range identifiers {
+			tests := []struct {
+				name, query string
+				variables   map[string]any
+			}{
+				{name: "literal", query: fmt.Sprintf(operation.literal, identifier.value)},
+				{name: "variable", query: operation.variable, variables: map[string]any{"id": identifier.value}},
+			}
+			for _, test := range tests {
+				t.Run(operation.name+"/"+identifier.name+"/"+test.name, func(t *testing.T) {
+					t.Parallel()
+					mock := NewMockMainDatabase(gomock.NewController(t))
+					result := requestGraphQL(t, testHandler(mock), test.query, test.variables)
+					require.Len(t, result.Errors, 1)
+					require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
+				})
+			}
+		}
 	}
 }
 
@@ -544,9 +619,6 @@ func TestInputsRejectedBeforeOpeningDatabase(t *testing.T) {
 		{name: "limit zero", query: `{main(limit:0){id}}`},
 		{name: "limit too large", query: `{main(limit:101){id}}`},
 		{name: "negative offset", query: `{main(offset:-1){id}}`},
-		{name: "zero query id", query: `{main(id:"0"){id}}`},
-		{name: "zero update id", query: `mutation{main(input:{update:{id:"0",title:"x"}}){main{id}}}`},
-		{name: "zero delete id", query: `mutation{main(input:{delete:{id:"0"}}){deletedId}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
