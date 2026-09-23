@@ -294,3 +294,105 @@ func TestLoadReturnsIndependentConfigurations(t *testing.T) {
 	second.Database.MaxConns = 1
 	require.EqualValues(t, 10, first.Database.MaxConns)
 }
+
+func TestLoadHTTPConfiguration(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		want     config.HTTP
+	}{
+		{
+			name: "omitted section uses defaults",
+			want: config.HTTP{
+				Addr:              "0.0.0.0:8080",
+				RequestTimeout:    10 * time.Second,
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       10 * time.Second,
+				WriteTimeout:      15 * time.Second,
+				IdleTimeout:       time.Minute,
+				ShutdownTimeout:   15 * time.Second,
+			},
+		},
+		{
+			name:     "omitted fields keep defaults",
+			contents: "http: {addr: '127.0.0.1:8081', request_timeout: 3s}",
+			want: config.HTTP{
+				Addr:              "127.0.0.1:8081",
+				RequestTimeout:    3 * time.Second,
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       10 * time.Second,
+				WriteTimeout:      15 * time.Second,
+				IdleTimeout:       time.Minute,
+				ShutdownTimeout:   15 * time.Second,
+			},
+		},
+		{
+			name: "configured fields replace defaults",
+			contents: `http:
+  addr: localhost:9000
+  request_timeout: 2s
+  read_header_timeout: 1s
+  read_timeout: 3s
+  write_timeout: 4s
+  idle_timeout: 30s
+  shutdown_timeout: 5s`,
+			want: config.HTTP{
+				Addr:              "localhost:9000",
+				RequestTimeout:    2 * time.Second,
+				ReadHeaderTimeout: time.Second,
+				ReadTimeout:       3 * time.Second,
+				WriteTimeout:      4 * time.Second,
+				IdleTimeout:       30 * time.Second,
+				ShutdownTimeout:   5 * time.Second,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			contents := "database: {connect_timeout: 5s, max_conns: 10}\n" + test.contents
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+			app, err := config.Load(path)
+			require.NoError(t, err)
+			require.Equal(t, test.want, app.HTTP)
+		})
+	}
+}
+
+func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{name: "empty address", contents: "addr: ''"},
+		{name: "missing port", contents: "addr: localhost"},
+		{name: "invalid port", contents: "addr: localhost:70000"},
+		{name: "zero request timeout", contents: "request_timeout: 0s"},
+		{name: "zero header timeout", contents: "read_header_timeout: 0s"},
+		{name: "zero read timeout", contents: "read_timeout: 0s"},
+		{name: "zero write timeout", contents: "write_timeout: 0s"},
+		{name: "zero idle timeout", contents: "idle_timeout: 0s"},
+		{name: "zero shutdown timeout", contents: "shutdown_timeout: 0s"},
+		{name: "negative timeout", contents: "request_timeout: -1s"},
+		{name: "invalid timeout", contents: "request_timeout: immediately"},
+		{name: "unknown field", contents: "timeout: 5s"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			contents := "database: {connect_timeout: 5s, max_conns: 10}\nhttp: {" + test.contents + "}"
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+			app, err := config.Load(path)
+			require.Error(t, err)
+			require.Nil(t, app)
+		})
+	}
+}
