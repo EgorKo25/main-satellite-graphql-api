@@ -117,8 +117,7 @@ HTTP-настройки имеют эти же defaults при отсутств�
 | --- | --- |
 | `CONFIG_PATH` | Путь YAML для Go-процесса; в Compose — путь файла на хосте, монтируемого как `/config.yaml` |
 | `DATABASE_URL` | Переопределение `database.url` для API; подключение для команд `make migrate-*` |
-| `TEST_DATABASE_URL` | Административное подключение к отдельному серверу тестовой БД |
-| `HTTP_PORT` / `DB_PORT` / `TEST_DB_PORT` | Порты Compose на хосте: `8080` / `5432` / `5433` |
+| `HTTP_PORT` / `DB_PORT` | Порты Compose на хосте: `8080` / `5432` |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Основная БД Compose: учебные `graphql` / `graphql_dev` / `graphql` |
 | `MIGRATION_TIMEOUT` | Таймаут контейнера миграций, по умолчанию `1m` |
 
@@ -533,43 +532,37 @@ go generate ./...
 
 Версии генераторов закреплены в `go.mod`. Сгенерированные файлы включены в репозиторий, поэтому для обычной сборки генерация не требуется. После повторного `go generate ./...` в них не должно появляться изменений.
 
-### Интеграционные тесты в Docker
+### Интеграционные тесты
+
+Нужен работающий Docker Engine или Docker Desktop с Linux-контейнерами. Для запуска Go на хосте поддерживается и Windows с Docker Desktop. [Dockertest `v4.0.0`](https://github.com/ory/dockertest/tree/v4.0.0) закреплён в `go.mod`.
+
+`TestMain` каждого интеграционного пакета автоматически запускает собственный `postgres:17.9-bookworm` со случайным свободным портом и tmpfs для данных. После готовности сервера каждый тест создаёт отдельную БД, применяет миграции и удаляет свою БД при завершении. `down/up` проверяется только в этой временной БД. По завершении пакета тестовый контейнер удаляется. Основная БД приложения и её том `postgres-data` в этом процессе не участвуют.
+
+Подключение к тестовому PostgreSQL определяется автоматически. Настройка URL и ручной запуск БД не нужны. Недоступность Docker, ошибка запуска контейнера или миграции завершают тесты с ошибкой; интеграционные проверки не пропускаются.
+
+#### Go на хосте
+
+Одна команда для Bash, zsh и PowerShell:
+
+```sh
+go test -tags=integration -count=1 ./...
+```
+
+При поддержке CGO и race detector:
+
+```sh
+go test -race -tags=integration -count=1 ./...
+```
+
+#### Go внутри Docker
 
 ```sh
 docker compose --profile test run --build --rm test
 ```
 
-Команда запускает отдельный `test-db` и выполняет `go test -race -tags=integration -count=1 ./...` внутри Go-контейнера. Основные `db`, `migrate`, `api` не нужны. `test-db` имеет отдельные учётные данные, порт и tmpfs вместо постоянного тома. Он не использует `postgres-data` основной БД.
+Команда выполняет `go test -race -tags=integration -count=1 ./...` внутри Go-контейнера. Compose подключает Docker socket и задаёт `DOCKER_HOST=unix:///var/run/docker.sock`, чтобы Dockertest управлял временными контейнерами через тот же демон. `DOCKERTEST_HOST=host.docker.internal` и `host-gateway` позволяют тестам обращаться к их опубликованным портам. Эти настройки уже находятся в `compose.yaml`; передавать их вручную не требуется.
 
-После тестов можно остановить только тестовый PostgreSQL:
-
-```sh
-docker compose --profile test stop test-db
-```
-
-Его данные временные и не сохраняются после остановки контейнера.
-
-### Интеграционные тесты с Go на хосте
-
-```sh
-docker compose --profile test up -d --wait test-db
-```
-
-Bash / zsh:
-
-```sh
-export TEST_DATABASE_URL='postgres://graphql_test:graphql_test@localhost:5433/postgres?sslmode=disable'
-go test -race -tags=integration -count=1 ./...
-```
-
-PowerShell:
-
-```powershell
-$env:TEST_DATABASE_URL = 'postgres://graphql_test:graphql_test@localhost:5433/postgres?sslmode=disable'
-go test -race -tags=integration -count=1 ./...
-```
-
-`TEST_DATABASE_URL` — административное подключение к выделенному тестовому серверу. Пользователь должен иметь право `CREATE DATABASE`. Каждый запуск создаёт БД с уникальным именем, применяет миграции и удаляет только созданную им БД. Проверка `down/up` выполняется внутри собственной тестовой БД. Тесты не перебирают и не удаляют чужие БД или контейнеры.
+CI использует тот же автоматический запуск Dockertest на GitHub Actions runner с Docker. Отдельный сервис PostgreSQL в workflow не требуется.
 
 Проверяются операции через настоящий GraphQL HTTP-handler и PostgreSQL: все разновидности спутников; union; ошибки OneOf в литералах и variables; пропущенные и `null`-поля; неизменяемость вида спутника; пагинация и ID; мягкое удаление; откат транзакций при сбое; конкурентные изменения; отсутствие N+1 по SQL-tracer. Unit-тесты покрывают валидацию, конфигурацию и GraphQL HTTP-контракт с generated mock базы данных. Mock проверяет значимые вызовы и переданные типизированные значения; SQL, блокировки и атомарность проверяются настоящим PostgreSQL.
 

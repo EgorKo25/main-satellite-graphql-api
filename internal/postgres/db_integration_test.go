@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"crypto/rand"
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
+	integrationtests "github.com/EgorKo25/main-satellite-graphql-api/internal/postgres/integration_tests"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -20,16 +22,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testDatabaseURL string
+
+func TestMain(tests *testing.M) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	server, err := integrationtests.New(ctx)
+
+	cancel()
+
+	if err != nil {
+		slog.Error("start PostgreSQL integration suite", "error", err)
+		os.Exit(1)
+	}
+
+	testDatabaseURL = server.URL
+	exitCode := tests.Run()
+	cleanupCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
+	err = server.Close(cleanupCtx)
+
+	done()
+
+	if err != nil {
+		slog.Error("clean up PostgreSQL integration suite", "error", err)
+
+		exitCode = 1
+	}
+
+	os.Exit(exitCode)
+}
+
 func setupDatabase(t *testing.T) (*postgres.DB, *pgxpool.Pool) {
 	t.Helper()
-
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	require.NotEmpty(t, dsn, "TEST_DATABASE_URL must point to the dedicated test PostgreSQL")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, dsn)
+	admin, err := pgx.Connect(ctx, testDatabaseURL)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		cleanupCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
@@ -50,18 +78,11 @@ func setupDatabase(t *testing.T) (*postgres.DB, *pgxpool.Pool) {
 		require.NoError(t, dropErr, "drop only the database created by this test")
 	})
 
-	testDSN := dsn + " dbname=" + name
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		parsed, parseErr := url.Parse(dsn)
-		require.NoError(t, parseErr)
+	parsed, err := url.Parse(testDatabaseURL)
+	require.NoError(t, err)
 
-		parsed.Path = "/" + name
-		query := parsed.Query()
-		query.Del("database")
-		query.Del("dbname")
-		parsed.RawQuery = query.Encode()
-		testDSN = parsed.String()
-	}
+	parsed.Path = "/" + name
+	testDSN := parsed.String()
 
 	connectionConfig, err := pgx.ParseConfig(testDSN)
 	require.NoError(t, err)
