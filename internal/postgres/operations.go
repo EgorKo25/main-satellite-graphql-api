@@ -27,9 +27,10 @@ func (db *DB) create(
 	main := &domain.Main{Title: title, SubObj: kind, CreatedAt: time.Now().UTC()}
 	main.UpdatedAt = main.CreatedAt
 
-	if err = transaction.QueryRow(ctx, `INSERT INTO main (title, sub_id, sub_obj, created_at, update_at)
-VALUES ($1, nextval(pg_get_serial_sequence($2, 'id')), $2, $3, $3) RETURNING id, sub_id`,
-		main.Title, string(kind), main.CreatedAt).Scan(&main.ID, &main.SubID); err != nil {
+	if err = transaction.QueryRow(ctx, `
+	    INSERT INTO main (title, sub_id, sub_obj, created_at, update_at)
+	    VALUES ($1, nextval(pg_get_serial_sequence($2, 'id')), $2, $3, $3) RETURNING id, sub_id;
+	`, main.Title, string(kind), main.CreatedAt).Scan(&main.ID, &main.SubID); err != nil {
 		return nil, fmt.Errorf("insert Main: %w", err)
 	}
 
@@ -113,11 +114,17 @@ func (db *DB) applyUpdate(
 
 	now := time.Now().UTC()
 
-	tag, err := transaction.Exec(ctx, `UPDATE main
-SET title = CASE WHEN $2::boolean THEN $3::text ELSE title END, update_at = $4
-WHERE id = $1 AND deleted_at IS NULL`, main.ID, title.IsSet(), title.Value(), now)
-	if err = exactlyOne(tag, err); err != nil {
+	tag, err := transaction.Exec(ctx, `
+	    UPDATE main
+	    SET title = CASE WHEN $2::boolean THEN $3::text ELSE title END, update_at = $4
+	    WHERE id = $1 AND deleted_at IS NULL;
+	`, main.ID, title.IsSet(), title.Value(), now)
+	if err != nil {
 		return nil, fmt.Errorf("update Main: %w", err)
+	}
+
+	if tag.RowsAffected() != 1 {
+		return nil, fmt.Errorf("update Main: expected one changed row, got %d", tag.RowsAffected())
 	}
 
 	if apply != nil {
@@ -152,10 +159,16 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 
 	now := time.Now().UTC()
 
-	tag, err := transaction.Exec(ctx, `UPDATE main SET deleted_at = $2, update_at = $2
-WHERE id = $1 AND deleted_at IS NULL`, main.ID, now)
-	if err = exactlyOne(tag, err); err != nil {
+	tag, err := transaction.Exec(ctx, `
+	    UPDATE main SET deleted_at = $2, update_at = $2
+	    WHERE id = $1 AND deleted_at IS NULL;
+	`, main.ID, now)
+	if err != nil {
 		return fmt.Errorf("delete Main: %w", err)
+	}
+
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("delete Main: expected one changed row, got %d", tag.RowsAffected())
 	}
 
 	if err = softDelete(ctx, transaction, main, now); err != nil {
