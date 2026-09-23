@@ -261,6 +261,8 @@ func TestLoadRejectsEmptyEnvironmentURL(t *testing.T) {
 }
 
 func TestLoadMissingFile(t *testing.T) {
+	t.Parallel()
+
 	app, err := config.Load(filepath.Join(t.TempDir(), "missing.yaml"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.Nil(t, app)

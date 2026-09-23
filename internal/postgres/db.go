@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,7 +23,7 @@ type satelliteHandler struct {
 func New(ctx context.Context, cfg config.Database) (*DB, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
-		return nil, fmt.Errorf("parse database configuration: invalid connection string")
+		return nil, errors.New("parse database configuration: invalid connection string")
 	}
 
 	poolConfig.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
