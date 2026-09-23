@@ -43,11 +43,11 @@ func Load(path string) error {
 		extra       yaml.Node
 	)
 
-	if err := decoder.Decode(&application); err != nil {
+	if err = decoder.Decode(&application); err != nil {
 		return errors.New("decode configuration: invalid YAML or unknown field")
 	}
 
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("configuration must contain exactly one YAML document")
 	}
 
@@ -55,7 +55,7 @@ func Load(path string) error {
 		application.Database.URL = url
 	}
 
-	if err := validate.Struct(application); err != nil {
+	if err = validate.Struct(application); err != nil {
 		return fmt.Errorf("validate configuration: %w", err)
 	}
 
