@@ -29,7 +29,8 @@ type Main struct {
 }
 
 type SubObject interface {
-	isSatellite()
+	Kind() Kind
+	Metadata() *Satellite
 }
 
 type Satellite struct {
@@ -40,13 +41,15 @@ type Satellite struct {
 	DeletedAt *time.Time
 }
 
+func (satellite *Satellite) Metadata() *Satellite { return satellite }
+
 type Tool struct {
 	Satellite
 
 	Description1 *string
 }
 
-func (*Tool) isSatellite() {}
+func (*Tool) Kind() Kind { return Tools }
 
 type Table struct {
 	Satellite
@@ -54,7 +57,7 @@ type Table struct {
 	Description2 *string
 }
 
-func (*Table) isSatellite() {}
+func (*Table) Kind() Kind { return Tables }
 
 type Chair struct {
 	Satellite
@@ -63,4 +66,4 @@ type Chair struct {
 	Type         ChairType
 }
 
-func (*Chair) isSatellite() {}
+func (*Chair) Kind() Kind { return Chairs }

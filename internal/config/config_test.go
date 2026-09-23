@@ -11,16 +11,7 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 )
 
-const unchangedURL = "postgres://localhost/unchanged"
-
 func TestLoadFromYAML(t *testing.T) {
-	t.Setenv("DATABASE_URL", "")
-	require.NoError(t, os.Unsetenv("DATABASE_URL"))
-
-	previous := config.App
-
-	t.Cleanup(func() { config.App = previous })
-
 	tests := []struct {
 		name     string
 		contents string
@@ -65,19 +56,15 @@ func TestLoadFromYAML(t *testing.T) {
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(test.contents), 0o600))
-			require.NoError(t, config.Load(path))
-			require.Equal(t, test.want, config.App.Database)
+
+			app, err := config.Load(path)
+			require.NoError(t, err)
+			require.Equal(t, test.want, app.Database)
 		})
 	}
 }
 
 func TestLoadDatabaseURLFromEnvironment(t *testing.T) {
-	t.Setenv("DATABASE_URL", "postgres://localhost/environment")
-
-	previous := config.App
-
-	t.Cleanup(func() { config.App = previous })
-
 	tests := []struct {
 		name     string
 		contents string
@@ -107,25 +94,20 @@ func TestLoadDatabaseURLFromEnvironment(t *testing.T) {
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(test.contents), 0o600))
-			require.NoError(t, config.Load(path))
+
+			app, err := config.Load(path)
+			require.NoError(t, err)
 			require.Equal(t, config.Database{
 				URL:            "postgres://localhost/environment",
 				ConnectTimeout: 5 * time.Second,
 				MaxConns:       10,
 				MinConns:       2,
-			}, config.App.Database)
+			}, app.Database)
 		})
 	}
 }
 
 func TestLoadRejectsInvalidConfiguration(t *testing.T) {
-	t.Setenv("DATABASE_URL", "")
-	require.NoError(t, os.Unsetenv("DATABASE_URL"))
-
-	previous := config.App
-
-	t.Cleanup(func() { config.App = previous })
-
 	tests := []struct {
 		name     string
 		contents string
@@ -249,21 +231,13 @@ database: {}`,
 			t.Setenv("DATABASE_URL", "")
 			require.NoError(t, os.Unsetenv("DATABASE_URL"))
 
-			config.App = config.Application{Database: config.Database{
-				URL:            unchangedURL,
-				ConnectTimeout: time.Second,
-				MaxConns:       2,
-				MinConns:       1,
-			}}
-
-			before := config.App
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(test.contents), 0o600))
 
-			err := config.Load(path)
+			app, err := config.Load(path)
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "sensitive-password")
-			require.Equal(t, before, config.App)
+			require.Nil(t, app)
 		})
 	}
 }
@@ -271,39 +245,52 @@ database: {}`,
 func TestLoadRejectsEmptyEnvironmentURL(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
 
-	previous := config.App
-
-	t.Cleanup(func() { config.App = previous })
-
-	config.App = config.Application{Database: config.Database{URL: unchangedURL}}
-
-	var (
-		before   = config.App
-		contents = `database:
+	var contents = `database:
   url: postgres://localhost/file
   connect_timeout: 5s
   max_conns: 10
   min_conns: 0
 `
-	)
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
-	require.Error(t, config.Load(path))
-	require.Equal(t, before, config.App)
+
+	app, err := config.Load(path)
+	require.Error(t, err)
+	require.Nil(t, app)
 }
 
 func TestLoadMissingFile(t *testing.T) {
-	t.Setenv("DATABASE_URL", "postgres://localhost/environment")
+	t.Parallel()
 
-	previous := config.App
-
-	t.Cleanup(func() { config.App = previous })
-
-	config.App = config.Application{Database: config.Database{URL: unchangedURL}}
-
-	before := config.App
-	err := config.Load(filepath.Join(t.TempDir(), "missing.yaml"))
+	app, err := config.Load(filepath.Join(t.TempDir(), "missing.yaml"))
 	require.ErrorIs(t, err, os.ErrNotExist)
-	require.Equal(t, before, config.App)
+	require.Nil(t, app)
+}
+
+func TestLoadReturnsIndependentConfigurations(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/first")
+
+	var contents = `database:
+  connect_timeout: 5s
+  max_conns: 10
+  min_conns: 0
+`
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+	first, err := config.Load(path)
+	require.NoError(t, err)
+
+	t.Setenv("DATABASE_URL", "postgres://localhost/second")
+
+	second, err := config.Load(path)
+	require.NoError(t, err)
+	require.NotSame(t, first, second)
+	require.Equal(t, "postgres://localhost/first", first.Database.URL)
+	require.Equal(t, "postgres://localhost/second", second.Database.URL)
+
+	second.Database.MaxConns = 1
+	require.EqualValues(t, 10, first.Database.MaxConns)
 }
