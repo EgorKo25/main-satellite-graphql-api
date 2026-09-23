@@ -2,15 +2,21 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *DB) List(ctx context.Context, mainID *int64, limit, offset int) ([]*domain.Main, error) {
-	rows, err := s.pool.Query(ctx, `SELECT
+func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+
+	rows, err := db.pool.Query(ctx, `SELECT
     m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
     t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
     b.id, b.main_id, b.description2, b.created_at, b.update_at, b.deleted_at,
@@ -20,7 +26,7 @@ LEFT JOIN tools t ON t.main_id = m.id
 LEFT JOIN tables b ON b.main_id = m.id
 LEFT JOIN chairs c ON c.main_id = m.id
 WHERE m.deleted_at IS NULL AND ($1::bigint IS NULL OR m.id = $1)
-ORDER BY m.id ASC LIMIT $2 OFFSET $3`, mainID, limit, offset)
+ORDER BY m.id ASC LIMIT $2 OFFSET $3`, input.ID, input.Limit, input.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("query Main list: %w", err)
 	}
@@ -28,8 +34,10 @@ ORDER BY m.id ASC LIMIT $2 OFFSET $3`, mainID, limit, offset)
 
 	result := make([]*domain.Main, 0)
 
+	var main *domain.Main
+
 	for rows.Next() {
-		main, err := scanAggregate(rows)
+		main, err = scanAggregate(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -37,14 +45,14 @@ ORDER BY m.id ASC LIMIT $2 OFFSET $3`, mainID, limit, offset)
 		result = append(result, main)
 	}
 
-	if err := rows.Err(); err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("read Main list: %w", err)
 	}
 
 	return result, nil
 }
 
-func (s *DB) ReadTx(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
+func (db *DB) readTx(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
 	return scanAggregate(transaction.QueryRow(ctx, `SELECT
     m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
     t.id, t.main_id, t.description1, t.created_at, t.update_at, t.deleted_at,
@@ -57,20 +65,25 @@ LEFT JOIN chairs c ON c.main_id = m.id
 WHERE m.id = $1`, mainID))
 }
 
-func (s *DB) LockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
+func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
 	var main domain.Main
 
-	if err := transaction.QueryRow(ctx, `SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
+	err := transaction.QueryRow(ctx, `SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
 FROM main WHERE id = $1 FOR UPDATE`, mainID).Scan(
 		&main.ID, &main.Title, &main.SubID, &main.SubObj, &main.CreatedAt, &main.UpdatedAt, &main.DeletedAt,
-	); err != nil {
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+
+	if err != nil {
 		return nil, fmt.Errorf("lock main %d: %w", mainID, err)
 	}
 
 	return &main, nil
 }
 
-func (s *DB) InsertMain(ctx context.Context, transaction pgx.Tx, main *domain.Main) (int64, error) {
+func (db *DB) insertMain(ctx context.Context, transaction pgx.Tx, main *domain.Main) (int64, error) {
 	var mainID int64
 
 	if err := transaction.QueryRow(ctx, `INSERT INTO main (title, sub_id, sub_obj, created_at, update_at)
@@ -82,14 +95,21 @@ VALUES ($1, $2, $3, $4, $5) RETURNING id`,
 	return mainID, nil
 }
 
-func (s *DB) UpdateMain(ctx context.Context, transaction pgx.Tx, main *domain.Main, now time.Time) error {
-	tag, err := transaction.Exec(ctx, `UPDATE main SET title = $2, update_at = $3 WHERE id = $1 AND deleted_at IS NULL`,
-		main.ID, main.Title, now)
+func (db *DB) updateMain(
+	ctx context.Context,
+	transaction pgx.Tx,
+	mainID int64,
+	title graphql.Omittable[*string],
+	now time.Time,
+) error {
+	tag, err := transaction.Exec(ctx, `UPDATE main
+SET title = CASE WHEN $2::boolean THEN $3::text ELSE title END, update_at = $4
+WHERE id = $1 AND deleted_at IS NULL`, mainID, title.IsSet(), title.Value(), now)
 
 	return exactlyOne(tag, err)
 }
 
-func (s *DB) DeleteMain(ctx context.Context, transaction pgx.Tx, mainID int64, now time.Time) error {
+func (db *DB) deleteMain(ctx context.Context, transaction pgx.Tx, mainID int64, now time.Time) error {
 	tag, err := transaction.Exec(ctx, `UPDATE main SET deleted_at = $2, update_at = $2
 WHERE id = $1 AND deleted_at IS NULL`, mainID, now)
 

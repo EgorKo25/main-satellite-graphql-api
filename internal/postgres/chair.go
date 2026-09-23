@@ -5,11 +5,48 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
 
-func nextChairID(ctx context.Context, tx pgx.Tx) (int64, error) {
+func (db *DB) CreateChair(ctx context.Context, title string, input ChairCreate) (*domain.Main, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+
+	return db.create(ctx, title, domain.Chairs, db.nextChairID, func(tx pgx.Tx, main *domain.Main) error {
+		tag, err := tx.Exec(ctx, `INSERT INTO chairs (id, main_id, description3, type, created_at, update_at)
+VALUES ($1, $2, $3, $4, $5, $5)`, main.SubID, main.ID, input.Description3, input.Type, main.CreatedAt)
+
+		return exactlyOne(tag, err)
+	})
+}
+
+func (db *DB) UpdateChair(
+	ctx context.Context,
+	mainID int64,
+	title graphql.Omittable[*string],
+	input ChairUpdate,
+) (*domain.Main, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+
+	return db.update(ctx, mainID, title, domain.Chairs, func(tx pgx.Tx, main *domain.Main, now time.Time) error {
+		tag, err := tx.Exec(ctx, `UPDATE chairs
+SET description3 = CASE WHEN $3::boolean THEN $4::text ELSE description3 END,
+    type = CASE WHEN $5::boolean THEN $6::chair_type ELSE type END,
+    update_at = $7
+WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`,
+			main.SubID, main.ID, input.Description3.IsSet(), input.Description3.Value(),
+			input.Type.IsSet(), input.Type.Value(), now)
+
+		return exactlyOne(tag, err)
+	})
+}
+
+func (db *DB) nextChairID(ctx context.Context, tx pgx.Tx) (int64, error) {
 	var subID int64
 
 	if err := tx.QueryRow(ctx, `SELECT nextval(pg_get_serial_sequence('chairs', 'id'))`).Scan(&subID); err != nil {
@@ -19,45 +56,7 @@ func nextChairID(ctx context.Context, tx pgx.Tx) (int64, error) {
 	return subID, nil
 }
 
-func lockChair(ctx context.Context, tx pgx.Tx, main *domain.Main) error {
-	var subID int64
-
-	if err := tx.QueryRow(ctx, `SELECT id FROM chairs
-WHERE id = $1 AND main_id = $2
-FOR UPDATE`, main.SubID, main.ID).Scan(&subID); err != nil {
-		return fmt.Errorf("lock chair for Main %d: %w", main.ID, err)
-	}
-
-	return nil
-}
-
-func createChair(ctx context.Context, tx pgx.Tx, main *domain.Main) error {
-	chair, ok := main.Satellite.(*domain.Chair)
-	if !ok || chair == nil {
-		return fmt.Errorf("create chair: invalid satellite %T", main.Satellite)
-	}
-
-	tag, err := tx.Exec(ctx, `INSERT INTO chairs (id, main_id, description3, created_at, update_at, type)
-VALUES ($1, $2, $3, $4, $5, $6)`,
-		main.SubID, main.ID, chair.Description3, chair.CreatedAt, chair.UpdatedAt, chair.Type)
-
-	return exactlyOne(tag, err)
-}
-
-func updateChair(ctx context.Context, tx pgx.Tx, main *domain.Main, now time.Time) error {
-	chair, ok := main.Satellite.(*domain.Chair)
-	if !ok || chair == nil {
-		return fmt.Errorf("update chair: invalid satellite %T", main.Satellite)
-	}
-
-	tag, err := tx.Exec(ctx, `UPDATE chairs SET description3 = $3, update_at = $4, type = $5
-WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`,
-		main.SubID, main.ID, chair.Description3, now, chair.Type)
-
-	return exactlyOne(tag, err)
-}
-
-func softDeleteChair(ctx context.Context, tx pgx.Tx, main *domain.Main, now time.Time) error {
+func (db *DB) deleteChair(ctx context.Context, tx pgx.Tx, main *domain.Main, now time.Time) error {
 	tag, err := tx.Exec(ctx, `UPDATE chairs SET deleted_at = $3, update_at = $3
 WHERE id = $1 AND main_id = $2 AND deleted_at IS NULL`,
 		main.SubID, main.ID, now)
