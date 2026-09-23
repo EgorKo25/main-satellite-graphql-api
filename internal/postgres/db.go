@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,8 +19,31 @@ type satelliteHandler struct {
 	softDelete func(context.Context, pgx.Tx, *domain.Main, time.Time) error
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{
+func New(ctx context.Context, cfg config.Database) (*DB, error) {
+	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database configuration: invalid connection string")
+	}
+
+	poolConfig.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
+	poolConfig.MaxConns = cfg.MaxConns
+	poolConfig.MinConns = cfg.MinConns
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create database pool: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
+	defer cancel()
+
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+
+	return &DB{
 		pool: pool,
 		handlers: map[domain.Kind]satelliteHandler{
 			domain.Tools: {
@@ -44,15 +68,19 @@ func New(pool *pgxpool.Pool) *Store {
 				softDelete: softDeleteChair,
 			},
 		},
-	}
+	}, nil
 }
 
-type Store struct {
+type DB struct {
 	pool     *pgxpool.Pool
 	handlers map[domain.Kind]satelliteHandler
 }
 
-func (s *Store) Begin(ctx context.Context) (pgx.Tx, error) {
+func (s *DB) Close() {
+	s.pool.Close()
+}
+
+func (s *DB) Begin(ctx context.Context) (pgx.Tx, error) {
 	transaction, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -61,7 +89,7 @@ func (s *Store) Begin(ctx context.Context) (pgx.Tx, error) {
 	return transaction, nil
 }
 
-func (s *Store) Now(ctx context.Context, transaction pgx.Tx) (time.Time, error) {
+func (s *DB) Now(ctx context.Context, transaction pgx.Tx) (time.Time, error) {
 	var now time.Time
 
 	if err := transaction.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {

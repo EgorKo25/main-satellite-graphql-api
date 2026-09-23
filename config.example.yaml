@@ -1,0 +1,6 @@
+database:
+  # Перед запуском задайте DATABASE_URL в окружении.
+  url: ""
+  connect_timeout: 5s
+  max_conns: 10
+  min_conns: 0

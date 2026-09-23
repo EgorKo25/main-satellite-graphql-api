@@ -19,12 +19,12 @@ var (
 	ErrSatelliteTypeMismatch = errors.New("satellite type cannot be changed")
 )
 
-func New(store *postgres.Store) *Service {
+func New(store *postgres.DB) *Service {
 	return &Service{store: store}
 }
 
 type Service struct {
-	store *postgres.Store
+	store *postgres.DB
 }
 
 func (s *Service) List(ctx context.Context, input ListInput) ([]*domain.Main, error) {

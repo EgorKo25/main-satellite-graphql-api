@@ -2,6 +2,7 @@
 AGENTS.md
 .tmp/
 .env
+config.yaml
 .env.*
 !.env.example
 bin/
