@@ -1,5 +1,3 @@
-GOOSE = go run -tags='no_clickhouse,no_libsql,no_mssql,no_mysql,no_sqlite3,no_vertica,no_ydb' github.com/pressly/goose/v3/cmd/goose@v3.28.0
-
 .PHONY: build run generate test test-race test-integration test-docker vet lint fmt migrate-up migrate-down migrate-status up down
 
 build:
@@ -33,14 +31,14 @@ fmt:
 	gofmt -w cmd internal tests generate.go
 
 migrate-up:
-	cd migrations && $(GOOSE) -env=none -dir . -timeout 1m postgres "$$DATABASE_URL" up
+	docker compose run --rm migrate up
 
-# Destructive: rolls back the application schema in DATABASE_URL.
+# Destructive: rolls back the application schema in the Compose database.
 migrate-down:
-	cd migrations && $(GOOSE) -env=none -dir . -timeout 1m postgres "$$DATABASE_URL" down
+	docker compose run --rm migrate down
 
 migrate-status:
-	cd migrations && $(GOOSE) -env=none -dir . -timeout 1m postgres "$$DATABASE_URL" status
+	docker compose run --rm migrate status
 
 up:
 	docker compose up --build -d

@@ -18,6 +18,8 @@ func New(ctx context.Context, cfg config.Database) (*DB, error) {
 		return nil, errors.New("parse database configuration: invalid connection string")
 	}
 
+	poolConfig.ConnConfig.User = cfg.User
+	poolConfig.ConnConfig.Password = cfg.Password
 	poolConfig.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 	poolConfig.MaxConns = cfg.MaxConns
 	poolConfig.MinConns = cfg.MinConns

@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -27,7 +26,9 @@ import (
 var testDatabaseURL string
 
 func TestMain(tests *testing.M) {
-	err := logger.Initialize(config.Logger{Level: "info", Encoding: "json"}, io.MultiWriter(os.Stderr))
+	err := logger.Initialize(config.Logger{Cores: []config.LoggerCore{{
+		Level: "info", Encoding: "json", Output: "stderr", TimeFormat: "utc",
+	}}})
 	if err != nil {
 		panic(err)
 	}
@@ -121,8 +122,11 @@ func setupDatabase(t *testing.T) (*postgres.DB, *pgxpool.Pool) {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
+	parsed.User = nil
 	database, err := postgres.New(ctx, config.Database{
-		URL:            testDSN,
+		URL:            parsed.String(),
+		User:           connectionConfig.User,
+		Password:       connectionConfig.Password,
 		ConnectTimeout: 5 * time.Second,
 		MaxConns:       2,
 	})

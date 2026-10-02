@@ -11,7 +11,17 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 )
 
+const databaseYAML = `database:
+  url: postgres://localhost/test
+  user: graphql
+  password: graphql_dev
+  connect_timeout: 5s
+  max_conns: 10
+`
+
 func TestLoadFromYAML(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		contents string
@@ -21,12 +31,16 @@ func TestLoadFromYAML(t *testing.T) {
 			name: "zero minimum connections",
 			contents: `database:
   url: postgres://localhost/first
+  user: first_user
+  password: first_password
   connect_timeout: 5s
   max_conns: 10
   min_conns: 0
 `,
 			want: config.Database{
 				URL:            "postgres://localhost/first",
+				User:           "first_user",
+				Password:       "first_password",
 				ConnectTimeout: 5 * time.Second,
 				MaxConns:       10,
 				MinConns:       0,
@@ -36,12 +50,16 @@ func TestLoadFromYAML(t *testing.T) {
 			name: "equal connection limits",
 			contents: `database:
   url: postgres://localhost/second
+  user: second_user
+  password: second_password
   connect_timeout: 250ms
   max_conns: 3
   min_conns: 3
 `,
 			want: config.Database{
 				URL:            "postgres://localhost/second",
+				User:           "second_user",
+				Password:       "second_password",
 				ConnectTimeout: 250 * time.Millisecond,
 				MaxConns:       3,
 				MinConns:       3,
@@ -51,8 +69,7 @@ func TestLoadFromYAML(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "")
-			require.NoError(t, os.Unsetenv("DATABASE_URL"))
+			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(test.contents), 0o600))
@@ -64,50 +81,36 @@ func TestLoadFromYAML(t *testing.T) {
 	}
 }
 
-func TestLoadDatabaseURLFromEnvironment(t *testing.T) {
-	tests := []struct {
-		name     string
-		contents string
-	}{
-		{
-			name: "override YAML URL",
-			contents: `database:
+func TestLoadIgnoresDatabaseURLFromEnvironment(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://ignored:ignored@localhost/environment")
+
+	var contents = `database:
   url: postgres://localhost/file
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   min_conns: 2
-`,
-		},
-		{
-			name: "supply missing YAML URL",
-			contents: `database:
-  connect_timeout: 5s
-  max_conns: 10
-  min_conns: 2
-`,
-		},
-	}
+`
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "postgres://localhost/environment")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
-			path := filepath.Join(t.TempDir(), "config.yaml")
-			require.NoError(t, os.WriteFile(path, []byte(test.contents), 0o600))
-
-			app, err := config.Load(path)
-			require.NoError(t, err)
-			require.Equal(t, config.Database{
-				URL:            "postgres://localhost/environment",
-				ConnectTimeout: 5 * time.Second,
-				MaxConns:       10,
-				MinConns:       2,
-			}, app.Database)
-		})
-	}
+	app, err := config.Load(path)
+	require.NoError(t, err)
+	require.Equal(t, config.Database{
+		URL:            "postgres://localhost/file",
+		User:           "graphql",
+		Password:       "graphql_dev",
+		ConnectTimeout: 5 * time.Second,
+		MaxConns:       10,
+		MinConns:       2,
+	}, app.Database)
 }
 
 func TestLoadRejectsInvalidConfiguration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		contents string
@@ -116,91 +119,194 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		{name: "missing database", contents: "{}"},
 		{
 			name: "unknown section",
-			contents: `database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: 10}
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 5s
+  max_conns: 10
 databaze: {}`,
 		},
 		{
 			name: "unknown database field",
 			contents: `database:
   url: postgres://localhost/test
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   pool_size: 10`,
 		},
 		{name: "invalid YAML", contents: "database: ["},
 		{
-			name: "multiple documents",
-			contents: `database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: 10}
----
-database: {}`,
-		},
-		{
-			name: "trailing empty document",
-			contents: `database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: 10}
----`,
-		},
-		{
-			name: "malformed trailing document",
-			contents: `database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: 10}
----
-[`,
-		},
-		{
 			name: "duplicate field",
 			contents: `database:
   url: postgres://localhost/test
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   max_conns: 20`,
 		},
 		{
-			name:     "empty URL",
-			contents: "database: {url: '', connect_timeout: 5s, max_conns: 10, min_conns: 0}",
+			name: "empty URL",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: ''
+  connect_timeout: 5s
+  max_conns: 10
+  min_conns: 0`,
 		},
 		{
-			name:     "null URL",
-			contents: "database: {url: null, connect_timeout: 5s, max_conns: 10, min_conns: 0}",
+			name: "null URL",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: null
+  connect_timeout: 5s
+  max_conns: 10
+  min_conns: 0`,
 		},
 		{
-			name:     "missing timeout",
-			contents: "database: {url: postgres://localhost/test, max_conns: 10, min_conns: 0}",
+			name: "missing user",
+			contents: `database:
+  url: postgres://localhost/test
+  password: graphql_dev
+  connect_timeout: 5s
+  max_conns: 10`,
 		},
 		{
-			name:     "zero timeout",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: 0s, max_conns: 10}",
+			name: "empty user",
+			contents: `database:
+  url: postgres://localhost/test
+  user: ''
+  password: graphql_dev
+  connect_timeout: 5s
+  max_conns: 10`,
 		},
 		{
-			name:     "negative timeout",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: -1s, max_conns: 10}",
+			name: "null user",
+			contents: `database:
+  url: postgres://localhost/test
+  user: null
+  password: graphql_dev
+  connect_timeout: 5s
+  max_conns: 10`,
 		},
 		{
-			name:     "invalid timeout",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: immediately, max_conns: 10}",
+			name: "missing password",
+			contents: `database:
+  url: postgres://localhost/test
+  user: graphql
+  connect_timeout: 5s
+  max_conns: 10`,
 		},
 		{
-			name:     "numeric timeout",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: 5, max_conns: 10}",
+			name: "empty password",
+			contents: `database:
+  url: postgres://localhost/test
+  user: graphql
+  password: ''
+  connect_timeout: 5s
+  max_conns: 10`,
 		},
 		{
-			name:     "missing maximum connections",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: 5s, min_conns: 0}",
+			name: "null password",
+			contents: `database:
+  url: postgres://localhost/test
+  user: graphql
+  password: null
+  connect_timeout: 5s
+  max_conns: 10`,
 		},
 		{
-			name:     "zero maximum connections",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: 0}",
+			name: "missing timeout",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  max_conns: 10
+  min_conns: 0`,
 		},
 		{
-			name:     "negative maximum connections",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: -1}",
+			name: "zero timeout",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 0s
+  max_conns: 10`,
 		},
 		{
-			name:     "maximum connections overflow",
-			contents: "database: {url: postgres://localhost/test, connect_timeout: 5s, max_conns: 2147483648}",
+			name: "negative timeout",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: -1s
+  max_conns: 10`,
+		},
+		{
+			name: "invalid timeout",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: immediately
+  max_conns: 10`,
+		},
+		{
+			name: "numeric timeout",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 5
+  max_conns: 10`,
+		},
+		{
+			name: "missing maximum connections",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 5s
+  min_conns: 0`,
+		},
+		{
+			name: "zero maximum connections",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 5s
+  max_conns: 0`,
+		},
+		{
+			name: "negative maximum connections",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 5s
+  max_conns: -1`,
+		},
+		{
+			name: "maximum connections overflow",
+			contents: `database:
+  user: graphql
+  password: graphql_dev
+  url: postgres://localhost/test
+  connect_timeout: 5s
+  max_conns: 2147483648`,
 		},
 		{
 			name: "negative minimum connections",
 			contents: `database:
   url: postgres://localhost/test
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   min_conns: -1
@@ -210,6 +316,8 @@ database: {}`,
 			name: "minimum exceeds maximum",
 			contents: `database:
   url: postgres://localhost/test
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   min_conns: 11
@@ -218,7 +326,9 @@ database: {}`,
 		{
 			name: "secrets are absent from YAML errors",
 			contents: `database:
-  url: postgres://user:sensitive-password@localhost/test
+  url: postgres://localhost/test
+  user: graphql
+  password: sensitive-password
   connect_timeout: sensitive-password
   max_conns: 10
   min_conns: 0
@@ -228,8 +338,7 @@ database: {}`,
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "")
-			require.NoError(t, os.Unsetenv("DATABASE_URL"))
+			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(test.contents), 0o600))
@@ -242,24 +351,6 @@ database: {}`,
 	}
 }
 
-func TestLoadRejectsEmptyEnvironmentURL(t *testing.T) {
-	t.Setenv("DATABASE_URL", "")
-
-	var contents = `database:
-  url: postgres://localhost/file
-  connect_timeout: 5s
-  max_conns: 10
-  min_conns: 0
-`
-
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
-
-	app, err := config.Load(path)
-	require.Error(t, err)
-	require.Nil(t, app)
-}
-
 func TestLoadMissingFile(t *testing.T) {
 	t.Parallel()
 
@@ -269,23 +360,36 @@ func TestLoadMissingFile(t *testing.T) {
 }
 
 func TestLoadReturnsIndependentConfigurations(t *testing.T) {
-	t.Setenv("DATABASE_URL", "postgres://localhost/first")
+	t.Parallel()
 
-	var contents = `database:
+	const (
+		firstContents = `database:
+  url: postgres://localhost/first
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   min_conns: 0
 `
+		secondContents = `database:
+  url: postgres://localhost/second
+  user: graphql
+  password: graphql_dev
+  connect_timeout: 5s
+  max_conns: 10
+  min_conns: 0
+`
+	)
 
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+	firstPath := filepath.Join(t.TempDir(), "first.yaml")
+	secondPath := filepath.Join(t.TempDir(), "second.yaml")
+	require.NoError(t, os.WriteFile(firstPath, []byte(firstContents), 0o600))
+	require.NoError(t, os.WriteFile(secondPath, []byte(secondContents), 0o600))
 
-	first, err := config.Load(path)
+	first, err := config.Load(firstPath)
 	require.NoError(t, err)
 
-	t.Setenv("DATABASE_URL", "postgres://localhost/second")
-
-	second, err := config.Load(path)
+	second, err := config.Load(secondPath)
 	require.NoError(t, err)
 	require.NotSame(t, first, second)
 	require.Equal(t, "postgres://localhost/first", first.Database.URL)
@@ -293,9 +397,14 @@ func TestLoadReturnsIndependentConfigurations(t *testing.T) {
 
 	second.Database.MaxConns = 1
 	require.EqualValues(t, 10, first.Database.MaxConns)
+
+	second.Logger.Cores[0].Level = "fatal"
+	require.Equal(t, "info", first.Logger.Cores[0].Level)
 }
 
 func TestLoadHTTPConfiguration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		contents string
@@ -350,10 +459,10 @@ func TestLoadHTTPConfiguration(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
-			contents := "database: {connect_timeout: 5s, max_conns: 10}\n" + test.contents
+			contents := databaseYAML + test.contents
 			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
 			app, err := config.Load(path)
@@ -364,6 +473,8 @@ func TestLoadHTTPConfiguration(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		contents string
@@ -384,10 +495,10 @@ func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
-			contents := "database: {connect_timeout: 5s, max_conns: 10}\nhttp: {" + test.contents + "}"
+			contents := databaseYAML + "http: {" + test.contents + "}"
 			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
 			app, err := config.Load(path)
@@ -398,10 +509,14 @@ func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
 }
 
 func TestLoadLoggerConfiguration(t *testing.T) {
-	const (
-		defaultLevel    = "info"
-		defaultEncoding = "json"
-	)
+	t.Parallel()
+
+	var defaultLogger = config.Logger{Cores: []config.LoggerCore{{
+		Level:      "info",
+		Encoding:   "json",
+		Output:     "stdout",
+		TimeFormat: "utc",
+	}}}
 
 	tests := []struct {
 		name     string
@@ -410,51 +525,70 @@ func TestLoadLoggerConfiguration(t *testing.T) {
 	}{
 		{
 			name: "omitted section uses defaults",
-			want: config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+			want: defaultLogger,
 		},
 		{
 			name:     "empty section keeps defaults",
 			contents: "logger: {}",
-			want:     config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
-		},
-		{
-			name:     "level replaces default",
-			contents: "logger: {level: debug}",
-			want:     config.Logger{Level: "debug", Encoding: defaultEncoding},
-		},
-		{
-			name:     "encoding replaces default",
-			contents: "logger: {encoding: console}",
-			want:     config.Logger{Level: defaultLevel, Encoding: "console"},
-		},
-		{
-			name:     "configured fields replace defaults",
-			contents: "logger: {level: warn, encoding: console}",
-			want:     config.Logger{Level: "warn", Encoding: "console"},
-		},
-		{
-			name:     "error level is supported",
-			contents: "logger: {level: error, encoding: json}",
-			want:     config.Logger{Level: "error", Encoding: defaultEncoding},
+			want:     defaultLogger,
 		},
 		{
 			name:     "null section keeps defaults",
 			contents: "logger: null",
-			want:     config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+			want:     defaultLogger,
 		},
 		{
-			name:     "null fields keep defaults",
-			contents: "logger: {level: null, encoding: null}",
-			want:     config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+			name: "configured core replaces default",
+			contents: `logger:
+  cores:
+    - level: debug
+      encoding: console
+      output: stderr
+      time_format: local`,
+			want: config.Logger{Cores: []config.LoggerCore{{
+				Level:      "debug",
+				Encoding:   "console",
+				Output:     "stderr",
+				TimeFormat: "local",
+			}}},
+		},
+		{
+			name: "independent console and file cores",
+			contents: `logger:
+  cores:
+    - level: warn
+      encoding: console
+      output: stdout
+      time_format: local
+    - level: error
+      encoding: json
+      output: file
+      path: logs/api.log
+      time_format: utc`,
+			want: config.Logger{Cores: []config.LoggerCore{
+				{
+					Level:      "warn",
+					Encoding:   "console",
+					Output:     "stdout",
+					TimeFormat: "local",
+				},
+				{
+					Level:      "error",
+					Encoding:   "json",
+					Output:     "file",
+					Path:       "logs/api.log",
+					TimeFormat: "utc",
+				},
+			}},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
-			contents := "database: {connect_timeout: 5s, max_conns: 10}\n" + test.contents
+			contents := databaseYAML + test.contents
 			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
 			app, err := config.Load(path)
@@ -464,28 +598,118 @@ func TestLoadLoggerConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadLoggerLevels(t *testing.T) {
+	t.Parallel()
+
+	for _, level := range []string{"debug", "info", "warn", "error", "dpanic", "panic", "fatal"} {
+		t.Run(level, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			contents := databaseYAML + "logger:\n  cores:\n    - {level: " + level +
+				", encoding: json, output: stdout, time_format: utc}"
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+			app, err := config.Load(path)
+			require.NoError(t, err)
+			require.Len(t, app.Logger.Cores, 1)
+			require.Equal(t, level, app.Logger.Cores[0].Level)
+		})
+	}
+}
+
 func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		contents string
 	}{
-		{name: "empty level", contents: "level: ''"},
-		{name: "unknown level", contents: "level: trace"},
-		{name: "unsupported fatal level", contents: "level: fatal"},
-		{name: "uppercase level", contents: "level: INFO"},
-		{name: "numeric level", contents: "level: 1"},
-		{name: "empty encoding", contents: "encoding: ''"},
-		{name: "unknown encoding", contents: "encoding: text"},
-		{name: "uppercase encoding", contents: "encoding: JSON"},
+		{name: "empty cores", contents: "cores: []"},
+		{name: "null cores", contents: "cores: null"},
+		{name: "empty core", contents: "cores: [{}]"},
+		{name: "null core", contents: "cores: [null]"},
+		{name: "flat logger configuration", contents: "level: info"},
 		{name: "unknown field", contents: "format: json"},
+		{
+			name: "empty level",
+			contents: `cores:
+    - {level: '', encoding: json, output: stdout, time_format: utc}`,
+		},
+		{
+			name: "unknown level",
+			contents: `cores:
+    - {level: trace, encoding: json, output: stdout, time_format: utc}`,
+		},
+		{
+			name: "uppercase level",
+			contents: `cores:
+    - {level: INFO, encoding: json, output: stdout, time_format: utc}`,
+		},
+		{
+			name: "numeric level",
+			contents: `cores:
+    - {level: 1, encoding: json, output: stdout, time_format: utc}`,
+		},
+		{
+			name: "empty encoding",
+			contents: `cores:
+    - {level: info, encoding: '', output: stdout, time_format: utc}`,
+		},
+		{
+			name: "unknown encoding",
+			contents: `cores:
+    - {level: info, encoding: text, output: stdout, time_format: utc}`,
+		},
+		{
+			name: "uppercase encoding",
+			contents: `cores:
+    - {level: info, encoding: JSON, output: stdout, time_format: utc}`,
+		},
+		{
+			name: "unknown output",
+			contents: `cores:
+    - {level: info, encoding: json, output: network, time_format: utc}`,
+		},
+		{
+			name: "missing output",
+			contents: `cores:
+    - {level: info, encoding: json, time_format: utc}`,
+		},
+		{
+			name: "file without path",
+			contents: `cores:
+    - {level: info, encoding: json, output: file, time_format: utc}`,
+		},
+		{
+			name: "file with empty path",
+			contents: `cores:
+    - {level: info, encoding: json, output: file, path: '', time_format: utc}`,
+		},
+		{
+			name: "unknown time format",
+			contents: `cores:
+    - {level: info, encoding: json, output: stdout, time_format: unix}`,
+		},
+		{
+			name: "missing time format",
+			contents: `cores:
+    - {level: info, encoding: json, output: stdout}`,
+		},
+		{
+			name: "invalid second core",
+			contents: `cores:
+    - {level: info, encoding: json, output: stdout, time_format: utc}
+    - {level: error, encoding: json, output: file, time_format: utc}`,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "config.yaml")
-			contents := "database: {connect_timeout: 5s, max_conns: 10}\nlogger: {" + test.contents + "}"
+			contents := databaseYAML + "logger:\n  " + test.contents
 			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
 			app, err := config.Load(path)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,35 +23,28 @@ func Load(path string) (*App, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	decoder.KnownFields(true)
 
-	var (
-		app = App{
-			HTTP: HTTP{
-				Addr:              "0.0.0.0:8080",
-				RequestTimeout:    10 * time.Second,
-				ReadHeaderTimeout: 5 * time.Second,
-				ReadTimeout:       10 * time.Second,
-				WriteTimeout:      15 * time.Second,
-				IdleTimeout:       time.Minute,
-				ShutdownTimeout:   15 * time.Second,
-			},
-			Logger: Logger{
-				Level:    "info",
-				Encoding: "json",
-			},
-		}
-		extra yaml.Node
-	)
+	var app = App{
+		HTTP: HTTP{
+			Addr:              "0.0.0.0:8080",
+			RequestTimeout:    10 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       time.Minute,
+			ShutdownTimeout:   15 * time.Second,
+		},
+		Logger: Logger{
+			Cores: []LoggerCore{{
+				Level:      "info",
+				Encoding:   "json",
+				Output:     "stdout",
+				TimeFormat: "utc",
+			}},
+		},
+	}
 
 	if err = decoder.Decode(&app); err != nil {
 		return nil, errors.New("decode configuration: invalid YAML or unknown field")
-	}
-
-	if err = decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("configuration must contain exactly one YAML document")
-	}
-
-	if url, present := os.LookupEnv("DATABASE_URL"); present {
-		app.Database.URL = url
 	}
 
 	if err = validate.Struct(app); err != nil {
@@ -70,6 +62,8 @@ type App struct {
 
 type Database struct {
 	URL            string        `validate:"required"                yaml:"url"`
+	User           string        `validate:"required"                yaml:"user"`
+	Password       string        `validate:"required"                yaml:"password"`
 	ConnectTimeout time.Duration `validate:"gt=0"                    yaml:"connect_timeout"`
 	MaxConns       int32         `validate:"gt=0"                    yaml:"max_conns"`
 	MinConns       int32         `validate:"gte=0,ltefield=MaxConns" yaml:"min_conns"`
@@ -86,6 +80,13 @@ type HTTP struct {
 }
 
 type Logger struct {
-	Level    string `validate:"oneof=debug info warn error" yaml:"level"`
-	Encoding string `validate:"oneof=json console"          yaml:"encoding"`
+	Cores []LoggerCore `validate:"required,min=1,dive" yaml:"cores"`
+}
+
+type LoggerCore struct {
+	Level      string `validate:"oneof=debug info warn error dpanic panic fatal" yaml:"level"`
+	Encoding   string `validate:"oneof=json console"                             yaml:"encoding"`
+	Output     string `validate:"oneof=stdout stderr file"                       yaml:"output"`
+	Path       string `validate:"required_if=Output file"                        yaml:"path"`
+	TimeFormat string `validate:"oneof=utc local"                                yaml:"time_format"`
 }

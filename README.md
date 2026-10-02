@@ -4,6 +4,8 @@ Go-сервис с PostgreSQL: один `Main` владеет ровно одн�
 
 Репозиторий: [EgorKo25/main-satellite-graphql-api](https://github.com/EgorKo25/main-satellite-graphql-api).
 
+Правила разработки и ревью собраны в [AGENTS.md](AGENTS.md): Go code style, PR workflow, SemVer, glab и договорённости проекта. Установка локальных skills на другом компьютере для их использования не требуется.
+
 ## Быстрый запуск в Docker
 
 Нужны Docker Engine / Docker Desktop с Linux-контейнерами и Docker Compose v2. Go на хосте для этого способа не требуется.
@@ -11,16 +13,12 @@ Go-сервис с PostgreSQL: один `Main` владеет ровно одн�
 ```sh
 git clone https://github.com/EgorKo25/main-satellite-graphql-api.git
 cd main-satellite-graphql-api
-cp .env.example .env
-cp config.example.yaml config.yaml
 docker compose up --build -d
 docker compose ps -a
 docker compose logs migrate api
 ```
 
-В PowerShell вместо `cp` используйте `Copy-Item .env.example .env` и `Copy-Item config.example.yaml config.yaml`.
-
-Без пользовательских настроек достаточно `docker compose up --build`: Compose использует значения по умолчанию и `config.example.yaml`. Если скопировали `.env.example`, создайте также `config.yaml`: в примере `.env` именно он указан в `CONFIG_PATH`.
+Эти же команды работают в PowerShell. Настройки уже заполнены: Compose монтирует `config.compose.yaml` с адресом БД `db:5432`. Переменные окружения для настройки приложения не нужны.
 
 Compose ждёт готовности PostgreSQL, запускает отдельный контейнер миграций, затем запускает API только после успешного завершения миграций. Повторный `up` миграций безопасен: применённые версии учитывает Goose. Такой порядок задаётся через [`depends_on` и условия готовности](https://docs.docker.com/compose/how-tos/startup-order/).
 
@@ -45,7 +43,7 @@ Invoke-RestMethod -Uri http://localhost:8080/graphql -Method Post -ContentType '
 docker compose down
 ```
 
-Пароли в `.env.example` — открытые учебные значения. API и PostgreSQL публикуют порты только на `127.0.0.1`. `.env` не должен попадать в Git; приложение не выводит DSN в лог. В Compose подключение API формируется из `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` и адреса `db:5432`. Если пароль содержит специальные символы URL, при составлении DSN их нужно кодировать.
+Пароль `graphql_dev` в примерах — открытое учебное значение. API и PostgreSQL публикуют порты только на `127.0.0.1`. Настройки API находятся в `config.compose.yaml`; параметры контейнера PostgreSQL и аргументы goose — в `compose.yaml`. При смене учётных данных обновите оба YAML-файла. Если том уже содержит БД, измените также пользователя/пароль в самой PostgreSQL: `POSTGRES_*` применяется только при первичной инициализации. Реальные секреты храните в локальных файлах вне Git.
 
 ## Локальный запуск Go
 
@@ -58,14 +56,12 @@ cp config.example.yaml config.yaml
 docker compose up -d --wait db
 ```
 
-Для миграций используется официальный goose CLI, закреплённый на `v3.28.0`. Build tags исключают ненужные этому проекту драйверы БД.
+Для миграций используется официальный goose CLI, закреплённый на `v3.28.0`, в контейнере `migrate`.
 
 Bash / zsh:
 
 ```sh
-export DATABASE_URL='postgres://graphql:graphql_dev@localhost:5432/graphql?sslmode=disable'
-GOOSE_TAGS='no_clickhouse,no_libsql,no_mssql,no_mysql,no_sqlite3,no_vertica,no_ydb'
-(cd migrations && go run -tags="$GOOSE_TAGS" github.com/pressly/goose/v3/cmd/goose@v3.28.0 -env=none -dir . -timeout 1m postgres "$DATABASE_URL" up)
+docker compose run --build --rm migrate up
 go run ./cmd/api
 ```
 
@@ -73,15 +69,12 @@ PowerShell:
 
 ```powershell
 Copy-Item config.example.yaml config.yaml
-$env:DATABASE_URL = 'postgres://graphql:graphql_dev@localhost:5432/graphql?sslmode=disable'
-$gooseTags = 'no_clickhouse,no_libsql,no_mssql,no_mysql,no_sqlite3,no_vertica,no_ydb'
-Push-Location migrations
-go run "-tags=$gooseTags" github.com/pressly/goose/v3/cmd/goose@v3.28.0 -env=none -dir . -timeout 1m postgres "$env:DATABASE_URL" up
-Pop-Location
+docker compose up -d --wait db
+docker compose run --build --rm migrate up
 go run ./cmd/api
 ```
 
-Go-процесс читает YAML из `CONFIG_PATH` (по умолчанию `config.yaml`); `DATABASE_URL` из окружения переопределяет `database.url`. Файл `.env` автоматически читает Compose, но не локальный Go-процесс. Примеры соответствуют стандартным настройкам `.env.example`. При изменении `DB_PORT` или учётных данных обновите локальный `DATABASE_URL`. Для одновременного запуска контейнерного и локального API задайте локальному процессу отдельный YAML с `http.addr: "0.0.0.0:8081"`.
+Go-процесс читает `config.yaml` из текущего каталога. Загрузчик не использует `DATABASE_URL`, `CONFIG_PATH` и другие env overrides приложения. Локальный пример содержит адрес `localhost:5432`, базу `graphql`, пользователя `graphql` и пароль `graphql_dev`. При смене опубликованного порта PostgreSQL обновите `database.url`. Для одновременного запуска контейнерного и локального API измените в локальном `config.yaml` поле `http.addr` на `"0.0.0.0:8081"`.
 
 Сборка бинарного файла:
 
@@ -95,11 +88,13 @@ go build -o bin/api ./cmd/api
 
 Конфигурация приложения — вложенный YAML. `config.Load(path)` возвращает проверенный `*config.App`; процесс хранит его в локальной переменной `cfg`, передаёт `cfg.Database` конструктору БД, `cfg.Logger` в `logger.Initialize` и использует `cfg.HTTP` при настройке сервера. Глобального изменяемого объекта конфигурации и геттеров нет.
 
-Пример без секретов находится в [config.example.yaml](config.example.yaml). Загрузчик отклоняет неизвестные поля, несколько YAML-документов и значения, не прошедшие `go-playground/validator/v10`. Загрузка и проверка завершаются до открытия HTTP-сервера. Локальный `config.yaml` и `.env` исключены из Git.
+Заполненные примеры находятся в [config.example.yaml](config.example.yaml) для запуска на хосте и [config.compose.yaml](config.compose.yaml) для Compose. Загрузчик отклоняет неизвестные поля и значения, не прошедшие `go-playground/validator/v10`. Загрузка и проверка завершаются до открытия HTTP-сервера. Локальный `config.yaml` исключён из Git.
 
 | Поле YAML | Значение в примере | Назначение |
 | --- | --- | --- |
-| `database.url` | пустая строка | DSN; задайте здесь или через `DATABASE_URL` |
+| `database.url` | `postgres://localhost:5432/graphql?sslmode=disable` | Адрес PostgreSQL и имя БД; в Compose используется хост `db` |
+| `database.user` | `graphql` | Пользователь PostgreSQL |
+| `database.password` | `graphql_dev` | Пароль PostgreSQL, передаётся драйверу отдельно от URL |
 | `database.connect_timeout` | `5s` | Подключение и проверка доступности БД при старте |
 | `database.max_conns` | `10` | Максимум соединений пула |
 | `database.min_conns` | `0` | Минимум соединений, не выше `max_conns` |
@@ -110,22 +105,35 @@ go build -o bin/api ./cmd/api
 | `http.write_timeout` | `15s` | Запись HTTP-ответа |
 | `http.idle_timeout` | `1m` | Ожидание следующего запроса в соединении |
 | `http.shutdown_timeout` | `15s` | Завершение активных запросов при остановке |
-| `logger.level` | `info` | Минимальный уровень: `debug`, `info`, `warn`, `error` |
-| `logger.encoding` | `json` | Формат записи: `json` или `console` |
+| `logger.cores[].level` | `info` | Минимальный уровень ядра: `debug`, `info`, `warn`, `error`, `dpanic`, `panic`, `fatal` |
+| `logger.cores[].encoding` | `json` | Формат записи: `json` или `console` |
+| `logger.cores[].output` | `stdout` | Вывод: `stdout`, `stderr` или `file` |
+| `logger.cores[].path` | не задан | Путь файла, обязателен для `output: file` |
+| `logger.cores[].time_format` | `utc` | Время в UTC/RFC3339Nano или `local`/ISO8601 |
 
 HTTP-настройки имеют эти же defaults при отсутствии полей; явно заданный нулевой timeout отклоняется. Параметры БД задаются YAML, а `database.min_conns: 0` допустим. Интервалы записываются как Go duration: `500ms`, `5s`, `1m`.
 
-Логгер использует адаптер над `go.uber.org/zap`. `main` один раз инициализирует общий логгер через `logger.Initialize(cfg.Logger)` до запуска обработки запросов; компоненты получают именованный логгер через `logger.Get(name)`. По умолчанию записи уровня `info` и выше поступают в stdout в формате JSON. Для локальной работы можно выбрать `logger.encoding: console` и `logger.level: debug`. При отсутствии секции или отдельных полей сохраняются defaults `info`/`json`; YAML `null` также сохраняет исходное значение, как у HTTP-настроек. Пустая строка и неизвестное значение отклоняются при загрузке конфигурации.
+Логгер использует адаптер над `go.uber.org/zap`. `main` один раз инициализирует общий логгер через `logger.Initialize` до запуска обработки запросов; компоненты получают именованный логгер через `logger.Get(name)`. Каждое ядро имеет собственный порог, формат и получатель; `zapcore.NewTee` направляет запись во все подходящие ядра. При отсутствии секции используется одно ядро `info/json/stdout/utc`. Явный список `cores` должен быть непустым, параметры каждого ядра проверяются валидатором.
 
-| Переменная окружения | Назначение |
-| --- | --- |
-| `CONFIG_PATH` | Путь YAML для Go-процесса; в Compose — путь файла на хосте, монтируемого как `/config.yaml` |
-| `DATABASE_URL` | Переопределение `database.url` для API; подключение для команд `make migrate-*` |
-| `HTTP_PORT` / `DB_PORT` | Порты Compose на хосте: `8080` / `5432` |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Основная БД Compose: учебные `graphql` / `graphql_dev` / `graphql` |
-| `MIGRATION_TIMEOUT` | Таймаут контейнера миграций, по умолчанию `1m` |
+Например, консоль для разработки и отдельный файл ошибок:
 
-Compose задаёт контейнеру миграций `GOOSE_DRIVER=postgres` и `GOOSE_DBSTRING` с адресом `db:5432`. Параметры HTTP и пула меняются через YAML. Размер HTTP body ограничен 1 MiB, сложность GraphQL-запроса — 10000; стоимость списка учитывает `limit`.
+```yaml
+logger:
+  cores:
+    - level: debug
+      encoding: console
+      output: stdout
+      time_format: local
+    - level: error
+      encoding: json
+      output: file
+      path: logs/errors.log
+      time_format: utc
+```
+
+Ошибка попадёт в оба ядра. Каталог файла создаётся при инициализации; процессу нужны права записи, а в контейнере — доступный для записи mount. При обычной остановке логгер синхронизирует и закрывает файловые получатели. Ошибка чтения конфига вызывает `panic` в `main`; после инициализации логгера ошибки запуска завершают процесс через `log.Fatal`.
+
+Compose передаёт goose драйвер и строку подключения аргументами команды. `POSTGRES_USER`, `POSTGRES_PASSWORD` и `POSTGRES_DB` заданы литералами в `compose.yaml`: это настройки стандартного образа PostgreSQL. API их не читает. Размер HTTP body ограничен 1 MiB, сложность GraphQL-запроса — 10000; стоимость списка учитывает `limit`.
 
 ## Контракт API
 
@@ -476,7 +484,7 @@ flowchart LR
 
 ```text
 cmd/api/                  запуск HTTP-сервера и graceful shutdown
-internal/config/          типизированный YAML, env override DSN и проверка настроек
+internal/config/          типизированный YAML и проверка настроек
 internal/logger/          общий логгер, именованные логгеры и адаптер zap
 internal/domain/          Main, Satellite, Tool, Table и Chair
 internal/postgres/        пул, входные типы операций, транзакции, SQL и чтение
@@ -486,6 +494,7 @@ internal/graph/model/     сгенерированные транспортны�
 internal/graph/generated/ сгенерированный исполняемый GraphQL-код
 migrations/               обычные SQL-файлы goose up/down
 config.example.yaml       пример конфигурации без секретов
+config.compose.yaml       заполненная конфигурация API для Compose
 ```
 
 `Satellite` содержит общие идентификаторы и timestamps и встроен в `Tool`, `Table`, `Chair`. У `Chair` находятся только его собственные `description3` и `type`. Интерфейс `domain.SubObject` даёт доступ к разновидности и общим данным для смешанного результата чтения.
@@ -496,7 +505,7 @@ config.example.yaml       пример конфигурации без секр�
 
 ### Миграции
 
-Используется официальный [goose CLI](https://github.com/pressly/goose) `v3.28.0`, без собственного runner и без `embed`. Goose читает SQL-файлы из каталога `migrations` и ведёт версии в служебной таблице БД. Команды запускаются из этого каталога с `-dir .`; `-env=none` отключает неявное чтение dotenv самим goose. Версия и build tags CLI одинаковы в Makefile и Dockerfile.
+Используется официальный [goose CLI](https://github.com/pressly/goose) `v3.28.0`, без собственного runner и без `embed`. Goose читает SQL-файлы из каталога `migrations` и ведёт версии в служебной таблице БД. Команды запускаются из этого каталога с `-dir .`; `-env=none` отключает неявное чтение dotenv самим goose. Версия CLI закреплена в Dockerfile, Makefile использует тот же контейнер миграций.
 
 API сам миграции не запускает. Обычный Compose сначала выполняет `up` в отдельном контейнере, затем запускает API. Повторный запуск не создаёт таблицы заново и не удаляет данные.
 
@@ -507,14 +516,14 @@ make migrate-status
 make migrate-up
 ```
 
-Эти команды используют `DATABASE_URL` из окружения и тот же официальный CLI, что показан выше. `down` удаляет доменную схему вместе с данными: перед проверкой отката переключите `DATABASE_URL` на заранее созданную одноразовую БД.
+Эти команды запускают контейнер `migrate` с подключением из `compose.yaml`. `down` удаляет доменную схему вместе с данными: перед проверкой отката укажите в отдельном Compose-файле заранее созданную одноразовую БД.
 
 ```sh
 make migrate-down
 make migrate-up
 ```
 
-Без Make используйте приведённую выше команду goose, заменив последний аргумент `up` на `status` или `down`. Интеграционная проверка `down/up` выполняется только внутри собственной временной БД; обычный запуск не откатывает основную схему.
+Без Make используйте `docker compose run --rm migrate status` или `docker compose run --rm migrate up`. Интеграционная проверка `down/up` выполняется только внутри собственной временной БД; обычный запуск не откатывает основную схему.
 
 ## Тестирование
 
@@ -598,7 +607,7 @@ CI использует тот же автоматический запуск Do
 - `Chair.type` можно изменять; разновидность `Tool/Table/Chair` сохраняется.
 - Полиморфная связь проверяется приложением; прямой SQL в обход него не входит в контракт целостности.
 - HTTP-handler gqlgen с прямыми bindings, один объект `postgres.DB` с пулом и локальными транзакциями, SQL без ORM, официальный goose CLI, адаптер `zap`.
-- Типизированная YAML-конфигурация, передаваемая из `main`; DSN допускает env override.
+- Типизированная YAML-конфигурация, загружаемая в `main`; URL, пользователь и пароль задаются в YAML.
 - Docker Compose, проверки контракта и интеграционные тесты с настоящим PostgreSQL.
 - Introspection доступна; HTTP body, сложность запроса и время исполнения ограничены.
 
