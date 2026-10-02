@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -73,7 +72,7 @@ func TestListQueryCount(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 
 			recorder := httptest.NewRecorder()
-			handler := graph.NewHandler(postgres.NewReadDBForTest(pool), slog.New(slog.DiscardHandler))
+			handler := graph.NewHandler(postgres.NewReadDBForTest(pool))
 
 			trace.queries.Store(0)
 			handler.ServeHTTP(recorder, request)

@@ -396,3 +396,101 @@ func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadLoggerConfiguration(t *testing.T) {
+	const (
+		defaultLevel    = "info"
+		defaultEncoding = "json"
+	)
+
+	tests := []struct {
+		name     string
+		contents string
+		want     config.Logger
+	}{
+		{
+			name: "omitted section uses defaults",
+			want: config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+		},
+		{
+			name:     "empty section keeps defaults",
+			contents: "logger: {}",
+			want:     config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+		},
+		{
+			name:     "level replaces default",
+			contents: "logger: {level: debug}",
+			want:     config.Logger{Level: "debug", Encoding: defaultEncoding},
+		},
+		{
+			name:     "encoding replaces default",
+			contents: "logger: {encoding: console}",
+			want:     config.Logger{Level: defaultLevel, Encoding: "console"},
+		},
+		{
+			name:     "configured fields replace defaults",
+			contents: "logger: {level: warn, encoding: console}",
+			want:     config.Logger{Level: "warn", Encoding: "console"},
+		},
+		{
+			name:     "error level is supported",
+			contents: "logger: {level: error, encoding: json}",
+			want:     config.Logger{Level: "error", Encoding: defaultEncoding},
+		},
+		{
+			name:     "null section keeps defaults",
+			contents: "logger: null",
+			want:     config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+		},
+		{
+			name:     "null fields keep defaults",
+			contents: "logger: {level: null, encoding: null}",
+			want:     config.Logger{Level: defaultLevel, Encoding: defaultEncoding},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			contents := "database: {connect_timeout: 5s, max_conns: 10}\n" + test.contents
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+			app, err := config.Load(path)
+			require.NoError(t, err)
+			require.Equal(t, test.want, app.Logger)
+		})
+	}
+}
+
+func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{name: "empty level", contents: "level: ''"},
+		{name: "unknown level", contents: "level: trace"},
+		{name: "unsupported fatal level", contents: "level: fatal"},
+		{name: "uppercase level", contents: "level: INFO"},
+		{name: "numeric level", contents: "level: 1"},
+		{name: "empty encoding", contents: "encoding: ''"},
+		{name: "unknown encoding", contents: "encoding: text"},
+		{name: "uppercase encoding", contents: "encoding: JSON"},
+		{name: "unknown field", contents: "format: json"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			contents := "database: {connect_timeout: 5s, max_conns: 10}\nlogger: {" + test.contents + "}"
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+			app, err := config.Load(path)
+			require.Error(t, err)
+			require.Nil(t, app)
+		})
+	}
+}

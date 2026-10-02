@@ -5,7 +5,8 @@ package integrationtests_test
 import (
 	"context"
 	"crypto/rand"
-	"log/slog"
+	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	integrationtests "github.com/EgorKo25/main-satellite-graphql-api/internal/postgres/integration_tests"
 	"github.com/jackc/pgx/v5"
@@ -25,14 +27,19 @@ import (
 var testDatabaseURL string
 
 func TestMain(tests *testing.M) {
+	err := logger.Initialize(config.Logger{Level: "info", Encoding: "json"}, io.MultiWriter(os.Stderr))
+	if err != nil {
+		panic(err)
+	}
+
+	log := logger.Get("integration")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	server, err := integrationtests.New(ctx)
 
 	cancel()
 
 	if err != nil {
-		slog.Error("start PostgreSQL integration suite", "error", err)
-		os.Exit(1)
+		log.Fatal("start PostgreSQL integration suite", err)
 	}
 
 	testDatabaseURL = server.URL
@@ -43,7 +50,13 @@ func TestMain(tests *testing.M) {
 	done()
 
 	if err != nil {
-		slog.Error("clean up PostgreSQL integration suite", "error", err)
+		log.Error("clean up PostgreSQL integration suite", err)
+
+		exitCode = 1
+	}
+
+	if err = log.Sync(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 
 		exitCode = 1
 	}

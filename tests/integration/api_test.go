@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	integrationtests "github.com/EgorKo25/main-satellite-graphql-api/internal/postgres/integration_tests"
 	"github.com/jackc/pgx/v5"
@@ -78,10 +79,15 @@ const (
 
 var testDatabaseURL string
 
-func TestMain(main *testing.M) {
-	if err := goose.SetDialect("postgres"); err != nil {
-		slog.Error("set migration dialect", "error", err)
-		os.Exit(1)
+func TestMain(tests *testing.M) {
+	err := logger.Initialize(config.Logger{Level: "info", Encoding: "json"}, io.MultiWriter(os.Stderr))
+	if err != nil {
+		panic(err)
+	}
+
+	log := logger.Get("integration")
+	if err = goose.SetDialect("postgres"); err != nil {
+		log.Fatal("set migration dialect", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -90,21 +96,27 @@ func TestMain(main *testing.M) {
 	cancel()
 
 	if err != nil {
-		slog.Error("start test PostgreSQL", "error", err)
-		os.Exit(1)
+		log.Fatal("start test PostgreSQL", err)
 	}
 
 	testDatabaseURL = server.URL
-	exitCode := main.Run()
+	exitCode := tests.Run()
 	cleanupCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
 
 	if err = server.Close(cleanupCtx); err != nil {
-		slog.Error("remove test PostgreSQL", "error", err)
+		log.Error("remove test PostgreSQL", err)
 
 		exitCode = 1
 	}
 
 	done()
+
+	if err = log.Sync(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+
+		exitCode = 1
+	}
+
 	os.Exit(exitCode)
 }
 
@@ -184,7 +196,7 @@ func setup(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(applicationDB.Close)
 
-	server := httptest.NewServer(graph.NewHandler(applicationDB, slog.New(slog.DiscardHandler)))
+	server := httptest.NewServer(graph.NewHandler(applicationDB))
 	server.Client().Timeout = 30 * time.Second
 	t.Cleanup(server.Close)
 

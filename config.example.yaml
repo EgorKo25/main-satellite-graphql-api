@@ -12,3 +12,6 @@ http:
   write_timeout: 15s
   idle_timeout: 1m
   shutdown_timeout: 15s
+logger:
+  level: info
+  encoding: json

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -25,6 +27,8 @@ const (
 	tableBranch     = "table"
 	chairBranch     = "chair"
 	toolDescription = "description1"
+	testLogLevel    = "info"
+	testLogEncoding = "json"
 )
 
 func sampleMain(kind domain.Kind) *domain.Main {
@@ -78,10 +82,6 @@ func requestGraphQL(t *testing.T, handler http.Handler, query string, variables 
 	)
 
 	return result
-}
-
-func testHandler(service mainDatabase) http.Handler {
-	return NewHandler(service, slog.New(slog.DiscardHandler))
 }
 
 func jsonObject(t *testing.T, value string) map[string]any {
@@ -161,7 +161,7 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 					input = map[string]any{"input": jsonObject(t, test.variable)}
 				}
 
-				result := requestGraphQL(t, testHandler(mock), query, input)
+				result := requestGraphQL(t, NewHandler(mock), query, input)
 				require.NotEmpty(t, result.Errors)
 
 				for _, err := range result.Errors {
@@ -175,7 +175,7 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 func TestOneOfValidationBeforeAnyMutationAlias(t *testing.T) {
 	t.Parallel()
 	mock := NewMockMainDatabase(gomock.NewController(t))
-	result := requestGraphQL(t, testHandler(mock), `mutation($bad:MainMutationInput!){
+	result := requestGraphQL(t, NewHandler(mock), `mutation($bad:MainMutationInput!){
 		first:main(input:{create:{title:"first",satellite:{tool:{}}}}){main{id}}
 		second:main(input:$bad){deletedId}
 	}`, map[string]any{"bad": map[string]any{"delete": map[string]any{"id": "1"}, "create": nil}})
@@ -251,7 +251,7 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 
 					result := requestGraphQL(
 						t,
-						testHandler(mock),
+						NewHandler(mock),
 						"mutation($branch:"+typ+"){main(input:"+test.input+"){deletedId}}",
 						variables,
 					)
@@ -317,7 +317,7 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 				t.Parallel()
 				mock := NewMockMainDatabase(gomock.NewController(t))
 				branch.expect(mock, graphql.OmittableOf(value.value))
-				result := requestGraphQL(t, testHandler(mock),
+				result := requestGraphQL(t, NewHandler(mock),
 					"mutation($input:MainMutationInput!){main(input:$input){main{id}}}",
 					map[string]any{"input": map[string]any{"update": map[string]any{
 						"id": "1", "satellite": map[string]any{
@@ -340,7 +340,7 @@ func TestTitleOnlyBinding(t *testing.T) {
 			mock := NewMockMainDatabase(gomock.NewController(t))
 			mock.EXPECT().UpdateMain(gomock.Any(), int64(1), graphql.OmittableOf(&title)).
 				Return(sampleMain(domain.Tools), nil)
-			result := requestGraphQL(t, testHandler(mock),
+			result := requestGraphQL(t, NewHandler(mock),
 				"mutation($title:String){main(input:{update:{id:1,title:$title}}){main{id}}}",
 				map[string]any{"title": title})
 			require.Empty(t, result.Errors)
@@ -372,7 +372,7 @@ func TestPatchVariablePresence(t *testing.T) {
 			}
 			mock.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
 				Return(sampleMain(domain.Chairs), nil)
-			result := requestGraphQL(t, testHandler(mock),
+			result := requestGraphQL(t, NewHandler(mock),
 				`mutation($description:String){
 				main(input:{update:{id:1,satellite:{chair:{type:cde,description3:$description}}}}){main{id}}
 			}`,
@@ -459,7 +459,7 @@ func TestGraphQLValidationRejectsBeforeService(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			mock := NewMockMainDatabase(gomock.NewController(t))
-			result := requestGraphQL(t, testHandler(mock), test.query, test.variables)
+			result := requestGraphQL(t, NewHandler(mock), test.query, test.variables)
 			require.NotEmpty(t, result.Errors)
 
 			for _, err := range result.Errors {
@@ -486,7 +486,7 @@ func TestDatabaseErrorsArePresented(t *testing.T) {
 			t.Parallel()
 			mock := NewMockMainDatabase(gomock.NewController(t))
 			mock.EXPECT().Delete(gomock.Any(), int64(1)).Return(fmt.Errorf("operation context: %w", test.err))
-			result := requestGraphQL(t, testHandler(mock), `mutation{main(input:{delete:{id:"1"}}){deletedId}}`, nil)
+			result := requestGraphQL(t, NewHandler(mock), `mutation{main(input:{delete:{id:"1"}}){deletedId}}`, nil)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, test.code, result.Errors[0].Extensions["code"])
 			require.JSONEq(t, "null", string(result.Data["main"]))
@@ -545,7 +545,7 @@ func TestInvalidIDFormats(t *testing.T) {
 				t.Run(operation.name+"/"+identifier.name+"/"+test.name, func(t *testing.T) {
 					t.Parallel()
 					mock := NewMockMainDatabase(gomock.NewController(t))
-					result := requestGraphQL(t, testHandler(mock), test.query, test.variables)
+					result := requestGraphQL(t, NewHandler(mock), test.query, test.variables)
 					require.Len(t, result.Errors, 1)
 					require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
 				})
@@ -592,7 +592,7 @@ func TestListInputMapping(t *testing.T) {
 
 			result := requestGraphQL(
 				t,
-				testHandler(mock),
+				NewHandler(mock),
 				`query($id:ID,$limit:Int! = 20,$offset:Int! = 0){main(id:$id,limit:$limit,offset:$offset){id}}`,
 				test.variables,
 			)
@@ -623,7 +623,7 @@ func TestInputsRejectedBeforeOpeningDatabase(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			result := requestGraphQL(t, testHandler(&postgres.DB{}), test.query, nil)
+			result := requestGraphQL(t, NewHandler(&postgres.DB{}), test.query, nil)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
 		})
@@ -635,7 +635,7 @@ func TestSchemaHasOnlyRequiredBusinessRoots(t *testing.T) {
 
 	result := requestGraphQL(
 		t,
-		testHandler(NewMockMainDatabase(gomock.NewController(t))),
+		NewHandler(NewMockMainDatabase(gomock.NewController(t))),
 		`{__schema{queryType{fields{name}}mutationType{fields{name}}subscriptionType{name}}}`,
 		nil,
 	)
@@ -671,7 +671,7 @@ func TestOneOfSchema(t *testing.T) {
 			t.Parallel()
 			result := requestGraphQL(
 				t,
-				testHandler(NewMockMainDatabase(gomock.NewController(t))),
+				NewHandler(NewMockMainDatabase(gomock.NewController(t))),
 				`{__type(name:"`+name+`"){isOneOf inputFields{name defaultValue type{kind}}}}`,
 				nil,
 			)
@@ -734,7 +734,7 @@ func TestCreateInputAndOutput(t *testing.T) {
 
 			result := requestGraphQL(
 				t,
-				testHandler(mock),
+				NewHandler(mock),
 				`mutation {
 					main(input:{create:{title:"",satellite:{`+test.kind+`:`+test.contents+`}}}) {
 						deletedId
@@ -776,9 +776,8 @@ func TestCreateInputAndOutput(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // Replaces the process-global logger.
 func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
-	t.Parallel()
-
 	cause := errors.New("postgres://secret@host SELECT sensitive")
 
 	tests := []struct {
@@ -790,24 +789,27 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
 			mock := NewMockMainDatabase(gomock.NewController(t))
 			mock.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return(nil, test.err)
 
-			var log bytes.Buffer
+			var output bytes.Buffer
 
-			result := requestGraphQL(t, NewHandler(mock, slog.New(slog.NewTextHandler(&log, nil))), "{main{id}}", nil)
+			cfg := config.Logger{Level: testLogLevel, Encoding: testLogEncoding}
+			require.NoError(t, logger.Initialize(cfg, &output))
+			t.Cleanup(func() { require.NoError(t, logger.Initialize(cfg, io.Discard)) })
+
+			result := requestGraphQL(t, NewHandler(mock), "{main{id}}", nil)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, "internal server error", result.Errors[0].Message)
 			require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
 
-			require.Contains(t, log.String(), test.err.Error())
+			require.Contains(t, output.String(), test.err.Error())
 		})
 	}
 }
 
+//nolint:paralleltest // Replaces the process-global logger.
 func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
-	t.Parallel()
 	mock := NewMockMainDatabase(gomock.NewController(t))
 	mock.EXPECT().
 		List(gomock.Any(), postgres.ListInput{Limit: 20}).
@@ -815,14 +817,18 @@ func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
 			panic("private panic")
 		})
 
-	var log bytes.Buffer
+	var output bytes.Buffer
 
-	result := requestGraphQL(t, NewHandler(mock, slog.New(slog.NewTextHandler(&log, nil))), "{main{id}}", nil)
+	cfg := config.Logger{Level: testLogLevel, Encoding: testLogEncoding}
+	require.NoError(t, logger.Initialize(cfg, &output))
+	t.Cleanup(func() { require.NoError(t, logger.Initialize(cfg, io.Discard)) })
+
+	result := requestGraphQL(t, NewHandler(mock), "{main{id}}", nil)
 	require.Len(t, result.Errors, 1)
 	require.Equal(t, "internal server error", result.Errors[0].Message)
 	require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
 
-	require.Contains(t, log.String(), "private panic")
+	require.Contains(t, output.String(), "private panic")
 }
 
 func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {
@@ -837,7 +843,7 @@ func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {
 	}
 
 	query.WriteString("}")
-	result := requestGraphQL(t, testHandler(mock), query.String(), nil)
+	result := requestGraphQL(t, NewHandler(mock), query.String(), nil)
 	require.NotEmpty(t, result.Errors)
 
 	for _, err := range result.Errors {
@@ -850,7 +856,7 @@ func TestMaximumPageAllowsCompleteSelection(t *testing.T) {
 	mock := NewMockMainDatabase(gomock.NewController(t))
 	mock.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 100}).Return([]*domain.Main{}, nil)
 
-	result := requestGraphQL(t, testHandler(mock), `{
+	result := requestGraphQL(t, NewHandler(mock), `{
 		main(limit:100) {
 			id title createdAt updatedAt deletedAt
 			satellite {
