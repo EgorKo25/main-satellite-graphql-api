@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -12,6 +11,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/generated"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
@@ -23,7 +23,8 @@ const (
 	internalServerError = "INTERNAL_SERVER_ERROR"
 )
 
-func NewHandler(database mainDatabase, logger *slog.Logger) http.Handler {
+func NewHandler(database mainDatabase) http.Handler {
+	log := logger.Get("graphql")
 	configuration := generated.Config{Resolvers: &Resolver{database: database}}
 	configuration.Complexity.Query.Main = func(childComplexity int, _ *int64, limit, _ int32) int {
 		if limit < 1 || limit > 100 {
@@ -57,9 +58,9 @@ func NewHandler(database mainDatabase, logger *slog.Logger) http.Handler {
 
 		return next(ctx)
 	})
-	server.AroundFields(presentResolverErrors(logger))
-	server.SetRecoverFunc(func(ctx context.Context, recovered any) error {
-		logger.ErrorContext(ctx, "panic while executing GraphQL request", "panic", recovered)
+	server.AroundFields(presentResolverErrors())
+	server.SetRecoverFunc(func(_ context.Context, recovered any) error {
+		log.Error("panic while executing GraphQL request", nil, logger.Any("panic", recovered))
 
 		return &gqlerror.Error{
 			Message:    "internal server error",
@@ -73,7 +74,9 @@ func NewHandler(database mainDatabase, logger *slog.Logger) http.Handler {
 	})
 }
 
-func presentResolverErrors(logger *slog.Logger) graphql.FieldMiddleware {
+func presentResolverErrors() graphql.FieldMiddleware {
+	log := logger.Get("graphql")
+
 	return func(ctx context.Context, next graphql.Resolver) (any, error) {
 		result, err := next(ctx)
 		if err == nil {
@@ -95,7 +98,7 @@ func presentResolverErrors(logger *slog.Logger) graphql.FieldMiddleware {
 		case errors.Is(err, postgres.ErrSatelliteTypeMismatch):
 			code, message = "SATELLITE_TYPE_MISMATCH", "satellite type cannot be changed"
 		default:
-			logger.ErrorContext(ctx, "GraphQL operation failed", "error", err)
+			log.Error("GraphQL operation failed", err)
 		}
 
 		presented := graphql.DefaultErrorPresenter(ctx, err)

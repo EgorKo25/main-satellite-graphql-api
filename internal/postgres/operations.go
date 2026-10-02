@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -191,6 +191,6 @@ func (db *DB) rollback(ctx context.Context, transaction pgx.Tx) {
 	defer cancel()
 
 	if err := transaction.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		slog.ErrorContext(ctx, "rollback failed", "error", err)
+		logger.Get("postgres").Error("rollback failed", err)
 	}
 }

@@ -25,15 +25,21 @@ func Load(path string) (*App, error) {
 	decoder.KnownFields(true)
 
 	var (
-		app = App{HTTP: HTTP{
-			Addr:              "0.0.0.0:8080",
-			RequestTimeout:    10 * time.Second,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       10 * time.Second,
-			WriteTimeout:      15 * time.Second,
-			IdleTimeout:       time.Minute,
-			ShutdownTimeout:   15 * time.Second,
-		}}
+		app = App{
+			HTTP: HTTP{
+				Addr:              "0.0.0.0:8080",
+				RequestTimeout:    10 * time.Second,
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       10 * time.Second,
+				WriteTimeout:      15 * time.Second,
+				IdleTimeout:       time.Minute,
+				ShutdownTimeout:   15 * time.Second,
+			},
+			Logger: Logger{
+				Level:    "info",
+				Encoding: "json",
+			},
+		}
 		extra yaml.Node
 	)
 
@@ -59,6 +65,7 @@ func Load(path string) (*App, error) {
 type App struct {
 	Database Database `yaml:"database"`
 	HTTP     HTTP     `yaml:"http"`
+	Logger   Logger   `yaml:"logger"`
 }
 
 type Database struct {
@@ -76,4 +83,9 @@ type HTTP struct {
 	WriteTimeout      time.Duration `validate:"gt=0"          yaml:"write_timeout"`
 	IdleTimeout       time.Duration `validate:"gt=0"          yaml:"idle_timeout"`
 	ShutdownTimeout   time.Duration `validate:"gt=0"          yaml:"shutdown_timeout"`
+}
+
+type Logger struct {
+	Level    string `validate:"oneof=debug info warn error" yaml:"level"`
+	Encoding string `validate:"oneof=json console"          yaml:"encoding"`
 }
