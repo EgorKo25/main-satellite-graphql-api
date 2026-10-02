@@ -11,6 +11,7 @@ type Logger interface {
 	With(attrs ...Attr) Logger
 	Named(name string) Logger
 	Sync() error
+	Close() error
 }
 
 func String(key, value string) Attr {

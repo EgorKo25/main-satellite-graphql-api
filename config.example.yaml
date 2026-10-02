@@ -1,6 +1,7 @@
 database:
-  # Перед запуском задайте DATABASE_URL в окружении.
-  url: ""
+  url: "postgres://localhost:5432/graphql?sslmode=disable"
+  user: graphql
+  password: graphql_dev
   connect_timeout: 5s
   max_conns: 10
   min_conns: 0
@@ -13,5 +14,8 @@ http:
   idle_timeout: 1m
   shutdown_timeout: 15s
 logger:
-  level: info
-  encoding: json
+  cores:
+    - level: info
+      encoding: json
+      output: stdout
+      time_format: utc

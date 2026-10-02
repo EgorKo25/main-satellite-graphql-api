@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -792,18 +793,27 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 			mock := NewMockMainDatabase(gomock.NewController(t))
 			mock.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return(nil, test.err)
 
-			var output bytes.Buffer
+			path := filepath.Join(t.TempDir(), "graphql.log")
+			cfg := config.Logger{Cores: []config.LoggerCore{{
+				Level: testLogLevel, Encoding: testLogEncoding, Output: "file", Path: path, TimeFormat: "utc",
+			}}}
+			require.NoError(t, logger.Initialize(cfg))
+			t.Cleanup(func() {
+				require.NoError(t, logger.Get("graphql").Close())
 
-			cfg := config.Logger{Level: testLogLevel, Encoding: testLogEncoding}
-			require.NoError(t, logger.Initialize(cfg, &output))
-			t.Cleanup(func() { require.NoError(t, logger.Initialize(cfg, io.Discard)) })
+				cfg.Cores[0].Output = "stderr"
+				cfg.Cores[0].Path = ""
+				require.NoError(t, logger.Initialize(cfg))
+			})
 
 			result := requestGraphQL(t, NewHandler(mock), "{main{id}}", nil)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, "internal server error", result.Errors[0].Message)
 			require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
 
-			require.Contains(t, output.String(), test.err.Error())
+			output, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Contains(t, string(output), test.err.Error())
 		})
 	}
 }
@@ -817,18 +827,27 @@ func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
 			panic("private panic")
 		})
 
-	var output bytes.Buffer
+	path := filepath.Join(t.TempDir(), "graphql.log")
+	cfg := config.Logger{Cores: []config.LoggerCore{{
+		Level: testLogLevel, Encoding: testLogEncoding, Output: "file", Path: path, TimeFormat: "utc",
+	}}}
+	require.NoError(t, logger.Initialize(cfg))
+	t.Cleanup(func() {
+		require.NoError(t, logger.Get("graphql").Close())
 
-	cfg := config.Logger{Level: testLogLevel, Encoding: testLogEncoding}
-	require.NoError(t, logger.Initialize(cfg, &output))
-	t.Cleanup(func() { require.NoError(t, logger.Initialize(cfg, io.Discard)) })
+		cfg.Cores[0].Output = "stderr"
+		cfg.Cores[0].Path = ""
+		require.NoError(t, logger.Initialize(cfg))
+	})
 
 	result := requestGraphQL(t, NewHandler(mock), "{main{id}}", nil)
 	require.Len(t, result.Errors, 1)
 	require.Equal(t, "internal server error", result.Errors[0].Message)
 	require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
 
-	require.Contains(t, output.String(), "private panic")
+	output, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(output), "private panic")
 }
 
 func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {

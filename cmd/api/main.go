@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,17 +17,12 @@ import (
 )
 
 func main() {
-	configPath := os.Getenv("CONFIG_PATH")
-	if configPath == "" {
-		configPath = "config.yaml"
-	}
-
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		panic(err)
 	}
 
-	if err = logger.Initialize(cfg.Logger, io.MultiWriter(os.Stdout)); err != nil {
+	if err = logger.Initialize(cfg.Logger); err != nil {
 		panic(err)
 	}
 
@@ -70,8 +64,9 @@ func main() {
 		log.Fatal("HTTP server stopped", err)
 	}
 
-	if err = log.Sync(); err != nil {
-		log.Fatal("sync logger", err)
+	if err = log.Close(); err != nil {
+		fmt.Fprintln(os.Stderr, "close logger:", err)
+		os.Exit(1)
 	}
 }
 

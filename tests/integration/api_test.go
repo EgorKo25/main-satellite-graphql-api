@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -80,7 +79,9 @@ const (
 var testDatabaseURL string
 
 func TestMain(tests *testing.M) {
-	err := logger.Initialize(config.Logger{Level: "info", Encoding: "json"}, io.MultiWriter(os.Stderr))
+	err := logger.Initialize(config.Logger{Cores: []config.LoggerCore{{
+		Level: "info", Encoding: "json", Output: "stderr", TimeFormat: "utc",
+	}}})
 	if err != nil {
 		panic(err)
 	}
@@ -188,8 +189,11 @@ func setup(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
+	parsed.User = nil
 	applicationDB, err := postgres.New(ctx, config.Database{
-		URL:            testDSN,
+		URL:            parsed.String(),
+		User:           cfg.ConnConfig.User,
+		Password:       cfg.ConnConfig.Password,
 		ConnectTimeout: 5 * time.Second,
 		MaxConns:       8,
 	})
