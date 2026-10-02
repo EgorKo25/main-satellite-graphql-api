@@ -5,6 +5,7 @@
 .tmp
 AGENTS.md
 config.yaml
+config/config.yaml
 .env
 .env.*
 bin

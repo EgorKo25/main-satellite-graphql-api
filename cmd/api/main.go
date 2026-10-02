@@ -16,8 +16,10 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 )
 
+var configPath = "./config/config.yaml"
+
 func main() {
-	cfg, err := config.Load("config.yaml")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		panic(err)
 	}
