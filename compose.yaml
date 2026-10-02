@@ -46,7 +46,7 @@ services:
     volumes:
       - type: bind
         source: ./config.compose.yaml
-        target: /config.yaml
+        target: /config/config.yaml
         read_only: true
         bind:
           create_host_path: false

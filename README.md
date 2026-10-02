@@ -18,7 +18,7 @@ docker compose ps -a
 docker compose logs migrate api
 ```
 
-Эти же команды работают в PowerShell. Настройки уже заполнены: Compose монтирует `config.compose.yaml` с адресом БД `db:5432`. Переменные окружения для настройки приложения не нужны.
+Эти же команды работают в PowerShell. Настройки уже заполнены: Compose монтирует `config.compose.yaml` с адресом БД `db:5432` в `/config/config.yaml`. Переменные окружения для настройки приложения не нужны.
 
 Compose ждёт готовности PostgreSQL, запускает отдельный контейнер миграций, затем запускает API только после успешного завершения миграций. Повторный `up` миграций безопасен: применённые версии учитывает Goose. Такой порядок задаётся через [`depends_on` и условия готовности](https://docs.docker.com/compose/how-tos/startup-order/).
 
@@ -52,7 +52,8 @@ docker compose down
 Создайте локальный YAML и запустите только БД:
 
 ```sh
-cp config.example.yaml config.yaml
+mkdir -p config
+cp config.example.yaml config/config.yaml
 docker compose up -d --wait db
 ```
 
@@ -68,13 +69,14 @@ go run ./cmd/api
 PowerShell:
 
 ```powershell
-Copy-Item config.example.yaml config.yaml
+New-Item -ItemType Directory -Path config -Force | Out-Null
+Copy-Item config.example.yaml config/config.yaml
 docker compose up -d --wait db
 docker compose run --build --rm migrate up
 go run ./cmd/api
 ```
 
-Go-процесс читает `config.yaml` из текущего каталога. Загрузчик не использует `DATABASE_URL`, `CONFIG_PATH` и другие env overrides приложения. Локальный пример содержит адрес `localhost:5432`, базу `graphql`, пользователя `graphql` и пароль `graphql_dev`. При смене опубликованного порта PostgreSQL обновите `database.url`. Для одновременного запуска контейнерного и локального API измените в локальном `config.yaml` поле `http.addr` на `"0.0.0.0:8081"`.
+Go-процесс читает `./config/config.yaml` относительно текущего каталога. Загрузчик не использует `DATABASE_URL`, `CONFIG_PATH` и другие env overrides приложения. Локальный пример содержит адрес `localhost:5432`, базу `graphql`, пользователя `graphql` и пароль `graphql_dev`. При смене опубликованного порта PostgreSQL обновите `database.url`. Для одновременного запуска контейнерного и локального API измените в локальном `config/config.yaml` поле `http.addr` на `"0.0.0.0:8081"`.
 
 Сборка бинарного файла:
 
@@ -82,13 +84,13 @@ Go-процесс читает `config.yaml` из текущего катало�
 go build -o bin/api ./cmd/api
 ```
 
-Для Windows можно выбрать имя `bin/api.exe`. В Docker-образе находятся `/api`, официальный `/goose` и SQL-файлы `/migrations`. Контейнер миграций запускается из `/migrations` с `-dir .`; приложение использует `/config.yaml`. Compose монтирует выбранный YAML только для чтения. Образ запускается от UID/GID `65532:65532` и не требует shell во время работы. API завершает текущие запросы при SIGINT/SIGTERM в пределах `http.shutdown_timeout`, затем закрывает пул БД.
+Для Windows можно выбрать имя `bin/api.exe`. В Docker-образе находятся `/api`, официальный `/goose` и SQL-файлы `/migrations`. Контейнер миграций запускается из `/migrations` с `-dir .`; приложение использует `/config/config.yaml`. Compose монтирует выбранный YAML только для чтения. Образ запускается от UID/GID `65532:65532` и не требует shell во время работы. API завершает текущие запросы при SIGINT/SIGTERM в пределах `http.shutdown_timeout`, затем закрывает пул БД.
 
 ### Конфигурация
 
-Конфигурация приложения — вложенный YAML. `config.Load(path)` возвращает проверенный `*config.App`; процесс хранит его в локальной переменной `cfg`, передаёт `cfg.Database` конструктору БД, `cfg.Logger` в `logger.Initialize` и использует `cfg.HTTP` при настройке сервера. Глобального изменяемого объекта конфигурации и геттеров нет.
+Конфигурация приложения — вложенный YAML. В пакете `main` объявлена `var configPath = "./config/config.yaml"`; `config.Load(configPath)` возвращает проверенный `*config.App`. Процесс хранит его в локальной переменной `cfg`, передаёт `cfg.Database` конструктору БД, `cfg.Logger` в `logger.Initialize` и использует `cfg.HTTP` при настройке сервера. Глобального изменяемого объекта конфигурации и геттеров нет.
 
-Заполненные примеры находятся в [config.example.yaml](config.example.yaml) для запуска на хосте и [config.compose.yaml](config.compose.yaml) для Compose. Загрузчик отклоняет неизвестные поля и значения, не прошедшие `go-playground/validator/v10`. Загрузка и проверка завершаются до открытия HTTP-сервера. Локальный `config.yaml` исключён из Git.
+Заполненные примеры остаются в корне проекта: [config.example.yaml](config.example.yaml) для запуска на хосте и [config.compose.yaml](config.compose.yaml) для Compose. Загрузчик отклоняет неизвестные поля и значения, не прошедшие `go-playground/validator/v10`. Загрузка и проверка завершаются до открытия HTTP-сервера. Локальный `config/config.yaml` исключён из Git.
 
 | Поле YAML | Значение в примере | Назначение |
 | --- | --- | --- |

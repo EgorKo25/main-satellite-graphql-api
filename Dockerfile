@@ -18,7 +18,7 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /out/api /api
 COPY --from=build /out/goose /goose
 COPY migrations/*.sql /migrations/
-COPY config.example.yaml /config.yaml
+COPY config.example.yaml /config/config.yaml
 WORKDIR /
 USER 65532:65532
 EXPOSE 8080
