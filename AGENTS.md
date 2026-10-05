@@ -13,10 +13,10 @@
 
 ## Конфигурация и запуск
 
-- Конфигурация — YAML; в пакете `main` объявлена `var configPath = "./config/config.yaml"`, загрузка — `config.Load(configPath)`. Не вводи `CONFIG_PATH`, `DATABASE_URL` и env overrides приложения.
+- Конфигурация — YAML; в `main` заданы `var configPath = "./config/config.yaml"` и `fs := afero.NewOsFs()`, загрузка — `config.Load(fs, configPath)`. Передавай общую FS потребителям; не создавай её внутри загрузчика. Не вводи env overrides.
 - `config.App` — тип, не глобальная переменная. Загрузчик возвращает объект; `main` создаёт основные зависимости, передавая разделы `cfg.Database`, `cfg.HTTP` конструкторам. Используй вложенные типизированные структуры и экспортированные поля без геттеров.
 - `database.url`, `database.user`, `database.password` — отдельные поля. Учётные данные pgx получает из `cfg.Database.User/Password`, без подмены окружением или данными URL.
-- Загрузка, defaults и проверка через `go-playground/validator/v10` завершаются до запросов. YAML декодируется с проверкой известных полей. Не добавляй `extra`, второй Decode и отдельную проверку дополнительного YAML-документа.
+- `App` встраивает `Database`, `HTTP`, `Logger` с YAML-тегами вложенных разделов. Defaults — теги `default` и `creasty/defaults` до Decode; затем YAML и validator. Не затирай явные нули defaults после Decode. Сохраняй KnownFields; не добавляй `extra` и второй Decode.
 - `config/config.yaml` локальный и исключён из Git. `config.example.yaml` и `config.compose.yaml` остаются в корне и содержат учебные настройки. Реальные секреты не попадают в примеры, инструкции и коммиты.
 - **Логгер глобальный по решению пользователя:** `main` один раз вызывает `logger.Initialize(cfg.Logger)`, компоненты используют `logger.Get(name)`. Не передавай логгер через конструкторы. Это исключение не делает конфигурацию глобальной.
 - Адаптер логгера использует zap; выходы и их настройки описываются списком `logger.cores` в YAML. Сохраняй несколько настраиваемых выходов.
@@ -51,7 +51,7 @@
 
 - Выполняй gofmt, относящиеся unit-тесты, go vet и golangci-lint v2. Изменения SQL, транзакций и маппинга проверяй настоящим PostgreSQL. Сохраняй воспроизводимую генерацию gqlgen и mockgen.
 - Интеграционные тесты и fixture лежат вместе рядом с пакетом: `internal/postgres/integration_tests/`, подготовка БД — `fixture.go`. Не оставляй тесты в корне пакета и не создавай соседний `internal/testpostgres` только ради fixture.
-- Build tag — `integration`. Dockertest запускает контейнер на пакет; каждый тест получает отдельную временную БД с миграциями. Docker обязателен: недоступность — ошибка, не skip. Контейнер очищает pool.Close; не совмещай это с Docker AutoRemove.
+- Build tag — `integration`. Для PostgreSQL Dockertest запускает контейнер на пакет и отдельную БД с миграциями на тест. Docker обязателен: недоступность — ошибка, не skip. Контейнер очищает pool.Close, без AutoRemove. Config-интеграции используют MemMapFs без Docker.
 - Не очищай чужие БД и Docker volumes. Проверки down/up — только в собственной тестовой БД. Моки не заменяют SQL NULL, миграции, rollback, блокировки и гонки.
 - Временные файлы помещай в `.tmp` и убирай после работы. Файлы запуска и README входят в PR #1; сохраняй новые изменения пользователя при переключении веток.
 
@@ -114,6 +114,7 @@ These are the user's preferences, scoped to the agreed task. Project-specific ru
 
 - Actively use `github.com/stretchr/testify/require`: NoError/Error, ErrorIs/ErrorAs, Equal, Len, JSONEq, Nil/NotNil, Empty, Contains, ElementsMatch and other fitting assertions. Expected comes first in Equal; ElementsMatch only when order is irrelevant.
 - No manual if+t.Fatal/t.Fatalf, reflect.DeepEqual or assertion wrappers where require already works. Resource setup helpers may use require directly. Preserve nil/empty differences, ordering and JSON meaning.
+- For partial struct comparison use `require.Empty(t, cmp.Diff(want, got, cmpopts.IgnoreFields(...)))` with explicit exclusions, or compare the complete relevant section. Diff alone does not ignore fields. Config tests use NewMemMapFs; keep YAML fixtures local and indented.
 - Require invokes FailNow: use it only in the test/subtest goroutine, including synchronous setup. Workers/callbacks return results; wait for them and assert in the test goroutine.
 - Bind test work to t.Context(); it is canceled before t.Cleanup, so resource cleanup needs a separate bounded context. Check errors and goroutine completion.
 - Table-drive cases sharing setup/action/assertions with names, inputs and expected results. Do not copy t.Run bodies; a loop of named subtests is appropriate.

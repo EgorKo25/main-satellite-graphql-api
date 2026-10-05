@@ -14,12 +14,15 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
+	"github.com/spf13/afero"
 )
 
 var configPath = "./config/config.yaml"
 
 func main() {
-	cfg, err := config.Load(configPath)
+	fs := afero.NewOsFs()
+
+	cfg, err := config.Load(fs, configPath)
 	if err != nil {
 		panic(err)
 	}
@@ -37,27 +40,28 @@ func main() {
 		log.Fatal("initialize database", err)
 	}
 
+	httpConfig := cfg.HTTP
 	handler := graph.NewHandler(database)
 	mux := http.NewServeMux()
 	mux.Handle("/graphql", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestCtx, cancel := context.WithTimeout(request.Context(), cfg.HTTP.RequestTimeout)
+		requestCtx, cancel := context.WithTimeout(request.Context(), httpConfig.RequestTimeout)
 		defer cancel()
 
 		handler.ServeHTTP(writer, request.WithContext(requestCtx))
 	}))
 
 	server := &http.Server{
-		Addr:              cfg.HTTP.Addr,
+		Addr:              httpConfig.Addr,
 		Handler:           mux,
-		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
-		ReadTimeout:       cfg.HTTP.ReadTimeout,
-		WriteTimeout:      cfg.HTTP.WriteTimeout,
-		IdleTimeout:       cfg.HTTP.IdleTimeout,
+		ReadHeaderTimeout: httpConfig.ReadHeaderTimeout,
+		ReadTimeout:       httpConfig.ReadTimeout,
+		WriteTimeout:      httpConfig.WriteTimeout,
+		IdleTimeout:       httpConfig.IdleTimeout,
 	}
 
-	log.Info("HTTP server starting", logger.String("address", cfg.HTTP.Addr))
+	log.Info("HTTP server starting", logger.String("address", httpConfig.Addr))
 
-	err = serve(ctx, server, cfg.HTTP.ShutdownTimeout)
+	err = serve(ctx, server, httpConfig.ShutdownTimeout)
 
 	database.Close()
 	stop()
