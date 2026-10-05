@@ -4,11 +4,14 @@ go 1.26.8
 
 require (
 	github.com/99designs/gqlgen v0.17.95
+	github.com/creasty/defaults v1.11.0
 	github.com/go-playground/validator/v10 v10.30.4
+	github.com/google/go-cmp v0.7.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/moby/moby/api v1.55.0
 	github.com/ory/dockertest/v4 v4.0.0
 	github.com/pressly/goose/v3 v3.28.0
+	github.com/spf13/afero v1.15.0
 	github.com/stretchr/testify v1.12.1
 	github.com/vektah/gqlparser/v2 v2.5.37
 	go.uber.org/mock v0.6.0
