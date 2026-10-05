@@ -10,8 +10,8 @@ import (
 )
 
 func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error) {
-	if err := input.Validate(); err != nil {
-		return nil, err
+	if err := db.validator.Struct(input); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 
 	rows, err := db.pool.Query(ctx, `

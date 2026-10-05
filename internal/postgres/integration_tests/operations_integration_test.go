@@ -18,8 +18,13 @@ import (
 )
 
 const (
-	initialTitle = "initial"
-	changedTitle = "changed"
+	initialTitle          = "initial"
+	changedTitle          = "changed"
+	toolName              = "tool"
+	tableName             = "table"
+	chairName             = "chair"
+	chairDescriptionField = "description3"
+	chairTypeField        = "type"
 )
 
 func TestSatelliteLifecycle(t *testing.T) {
@@ -27,69 +32,27 @@ func TestSatelliteLifecycle(t *testing.T) {
 
 	tests := []struct {
 		kind        domain.Kind
+		name        string
 		description string
-		create      func(context.Context, *postgres.DB) (*domain.Main, error)
-		update      func(context.Context, *postgres.DB, int64, graphql.Omittable[*string]) (*domain.Main, error)
+		create      map[string]any
 	}{
 		{
 			kind:        domain.Tools,
+			name:        toolName,
 			description: "description1",
-			create: func(ctx context.Context, database *postgres.DB) (*domain.Main, error) {
-				return database.CreateTool(ctx, initialTitle, postgres.ToolCreate{})
-			},
-			update: func(
-				ctx context.Context,
-				database *postgres.DB,
-				id int64,
-				value graphql.Omittable[*string],
-			) (*domain.Main, error) {
-				return database.UpdateTool(
-					ctx,
-					id,
-					graphql.Omittable[*string]{},
-					postgres.ToolUpdate{Description1: value},
-				)
-			},
+			create:      map[string]any{toolName: map[string]any{}},
 		},
 		{
 			kind:        domain.Tables,
+			name:        tableName,
 			description: "description2",
-			create: func(ctx context.Context, database *postgres.DB) (*domain.Main, error) {
-				return database.CreateTable(ctx, initialTitle, postgres.TableCreate{})
-			},
-			update: func(
-				ctx context.Context,
-				database *postgres.DB,
-				id int64,
-				value graphql.Omittable[*string],
-			) (*domain.Main, error) {
-				return database.UpdateTable(
-					ctx,
-					id,
-					graphql.Omittable[*string]{},
-					postgres.TableUpdate{Description2: value},
-				)
-			},
+			create:      map[string]any{tableName: map[string]any{}},
 		},
 		{
 			kind:        domain.Chairs,
-			description: "description3",
-			create: func(ctx context.Context, database *postgres.DB) (*domain.Main, error) {
-				return database.CreateChair(ctx, initialTitle, postgres.ChairCreate{Type: domain.ABC})
-			},
-			update: func(
-				ctx context.Context,
-				database *postgres.DB,
-				id int64,
-				value graphql.Omittable[*string],
-			) (*domain.Main, error) {
-				return database.UpdateChair(
-					ctx,
-					id,
-					graphql.Omittable[*string]{},
-					postgres.ChairUpdate{Description3: value},
-				)
-			},
+			name:        chairName,
+			description: chairDescriptionField,
+			create:      map[string]any{chairName: map[string]any{chairTypeField: domain.ABC}},
 		},
 	}
 
@@ -99,7 +62,7 @@ func TestSatelliteLifecycle(t *testing.T) {
 
 			database, pool := setupDatabase(t)
 			ctx := t.Context()
-			created, err := test.create(ctx, database)
+			created, err := database.Create(ctx, initialTitle, test.create)
 			require.NoError(t, err)
 			require.Positive(t, created.ID)
 			require.Equal(t, test.kind, created.SubObj)
@@ -129,11 +92,13 @@ func TestSatelliteLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, satelliteCount)
 
-			updated, err := test.update(ctx, database, created.ID, graphql.OmittableOf(new("first")))
+			updated, err := database.Update(ctx, created.ID, graphql.Omittable[*string]{},
+				graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: new("first")}}))
 			require.NoError(t, err)
 
 			beforeTitleUpdate := updated.Satellite.Metadata().UpdatedAt
-			updated, err = database.UpdateMain(ctx, created.ID, graphql.OmittableOf(new(changedTitle)))
+			updated, err = database.Update(ctx, created.ID, graphql.OmittableOf(new(changedTitle)),
+				graphql.Omittable[map[string]any]{})
 			require.NoError(t, err)
 			require.Equal(t, changedTitle, updated.Title)
 			require.Equal(t, created.CreatedAt, updated.CreatedAt)
@@ -146,7 +111,8 @@ func TestSatelliteLifecycle(t *testing.T) {
 			require.Equal(t, new("first"), storedDescription)
 
 			for _, description := range []*string{new(""), nil} {
-				updated, err = test.update(ctx, database, created.ID, graphql.OmittableOf(description))
+				updated, err = database.Update(ctx, created.ID, graphql.Omittable[*string]{},
+					graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: description}}))
 				require.NoError(t, err)
 				require.Equal(t, changedTitle, updated.Title)
 				require.Equal(t, created.CreatedAt, updated.CreatedAt)
@@ -179,7 +145,8 @@ WHERE m.id = $1`, pgx.Identifier{string(test.kind)}.Sanitize()), created.ID).
 			require.Equal(t, mainDeleted, satelliteUpdated)
 			require.ErrorIs(t, database.Delete(ctx, created.ID), postgres.ErrAlreadyDeleted)
 
-			updated, err = test.update(ctx, database, created.ID, graphql.OmittableOf(new("forbidden")))
+			updated, err = database.Update(ctx, created.ID, graphql.Omittable[*string]{},
+				graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: new("forbidden")}}))
 			require.ErrorIs(t, err, postgres.ErrNotFound)
 			require.Nil(t, updated)
 
@@ -194,16 +161,16 @@ func TestChairTypeOnlyUpdate(t *testing.T) {
 	t.Parallel()
 
 	database, pool := setupDatabase(t)
-	created, err := database.CreateChair(t.Context(), "", postgres.ChairCreate{
-		Description3: new("retained"),
-		Type:         domain.ABC,
-	})
+	created, err := database.Create(t.Context(), "", map[string]any{chairName: map[string]any{
+		chairDescriptionField: new("retained"),
+		chairTypeField:        domain.ABC,
+	}})
 	require.NoError(t, err)
 	require.Empty(t, created.Title)
 
 	for _, chairType := range []domain.ChairType{domain.CDE, domain.ABC} {
-		updated, updateErr := database.UpdateChair(t.Context(), created.ID, graphql.Omittable[*string]{},
-			postgres.ChairUpdate{Type: graphql.OmittableOf(&chairType)})
+		updated, updateErr := database.Update(t.Context(), created.ID, graphql.Omittable[*string]{},
+			graphql.OmittableOf(map[string]any{chairName: map[string]any{chairTypeField: &chairType}}))
 		require.NoError(t, updateErr)
 		require.Equal(t, domain.Chairs, updated.SubObj)
 
@@ -220,43 +187,128 @@ func TestChairTypeOnlyUpdate(t *testing.T) {
 	}
 }
 
-func TestUpdateFailurePreservesWholeAggregate(t *testing.T) {
+func TestUpdateRejectsEmptySatellitePatch(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name   string
-		update func(context.Context, *postgres.DB, int64) (*domain.Main, error)
-		want   error
+		create map[string]any
+	}{
+		{name: toolName, create: map[string]any{toolName: map[string]any{}}},
+		{name: tableName, create: map[string]any{tableName: map[string]any{}}},
+		{name: chairName, create: map[string]any{chairName: map[string]any{chairTypeField: domain.ABC}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			database, _ := setupDatabase(t)
+			created, err := database.Create(t.Context(), initialTitle, test.create)
+			require.NoError(t, err)
+
+			updated, err := database.Update(t.Context(), created.ID, graphql.OmittableOf(new(changedTitle)),
+				graphql.OmittableOf(map[string]any{test.name: map[string]any{}}))
+			require.ErrorIs(t, err, postgres.ErrInvalidInput)
+			require.Nil(t, updated)
+
+			stored, err := database.List(t.Context(), postgres.ListInput{ID: &created.ID, Limit: 20})
+			require.NoError(t, err)
+			require.Equal(t, []*domain.Main{created}, stored)
+		})
+	}
+}
+
+func TestWritePreservesInputMaps(t *testing.T) {
+	t.Parallel()
+
+	var (
+		create = map[string]any{chairName: map[string]any{
+			chairDescriptionField: new("initial description"),
+			chairTypeField:        domain.ABC,
+		}}
+		wantCreate = map[string]any{chairName: map[string]any{
+			chairDescriptionField: new("initial description"),
+			chairTypeField:        domain.ABC,
+		}}
+		update = map[string]any{chairName: map[string]any{
+			chairDescriptionField: (*string)(nil),
+			chairTypeField:        new(domain.CDE),
+		}}
+		wantUpdate = map[string]any{chairName: map[string]any{
+			chairDescriptionField: (*string)(nil),
+			chairTypeField:        new(domain.CDE),
+		}}
+	)
+
+	database, _ := setupDatabase(t)
+	created, err := database.Create(t.Context(), initialTitle, create)
+	require.NoError(t, err)
+	require.Equal(t, wantCreate, create)
+
+	updated, err := database.Update(t.Context(), created.ID, graphql.OmittableOf(new(changedTitle)),
+		graphql.OmittableOf(update))
+	require.NoError(t, err)
+	require.Equal(t, wantUpdate, update)
+	require.Equal(t, wantCreate, create)
+	require.Equal(t, changedTitle, updated.Title)
+
+	chair, ok := updated.Satellite.(*domain.Chair)
+	require.True(t, ok)
+	require.Nil(t, chair.Description3)
+	require.Equal(t, domain.CDE, chair.Type)
+}
+
+func TestUpdateFailurePreservesWholeAggregate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		title     graphql.Omittable[*string]
+		satellite graphql.Omittable[map[string]any]
+		want      error
 	}{
 		{
-			name: "different satellite kind",
-			update: func(ctx context.Context, database *postgres.DB, id int64) (*domain.Main, error) {
-				return database.UpdateTool(ctx, id, graphql.OmittableOf(new(changedTitle)),
-					postgres.ToolUpdate{Description1: graphql.OmittableOf(new("different"))})
-			},
-			want: postgres.ErrSatelliteTypeMismatch,
+			name:      "different satellite kind",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{toolName: map[string]any{"description1": new("different")}}),
+			want:      postgres.ErrSatelliteTypeMismatch,
 		},
 		{
-			name: "empty satellite patch with changed title",
-			update: func(ctx context.Context, database *postgres.DB, id int64) (*domain.Main, error) {
-				return database.UpdateChair(ctx, id, graphql.OmittableOf(new(changedTitle)), postgres.ChairUpdate{})
-			},
+			name:      "empty satellite patch with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{chairName: map[string]any{}}),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name:  "null chair type with changed title",
+			title: graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(
+				map[string]any{chairName: map[string]any{chairTypeField: (*domain.ChairType)(nil)}},
+			),
 			want: postgres.ErrInvalidInput,
 		},
 		{
-			name: "null chair type with changed title",
-			update: func(ctx context.Context, database *postgres.DB, id int64) (*domain.Main, error) {
-				return database.UpdateChair(ctx, id, graphql.OmittableOf(new(changedTitle)),
-					postgres.ChairUpdate{Type: graphql.OmittableOf[*domain.ChairType](nil)})
-			},
+			name:  "null title with changed description",
+			title: graphql.OmittableOf[*string](nil),
+			satellite: graphql.OmittableOf(
+				map[string]any{chairName: map[string]any{chairDescriptionField: new("different")}},
+			),
 			want: postgres.ErrInvalidInput,
 		},
 		{
-			name: "null title with changed description",
-			update: func(ctx context.Context, database *postgres.DB, id int64) (*domain.Main, error) {
-				return database.UpdateChair(ctx, id, graphql.OmittableOf[*string](nil),
-					postgres.ChairUpdate{Description3: graphql.OmittableOf(new("different"))})
-			},
+			name:      "null satellite with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf[map[string]any](nil),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name:      "empty satellite selection with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{}),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name: "empty update",
 			want: postgres.ErrInvalidInput,
 		},
 	}
@@ -266,13 +318,13 @@ func TestUpdateFailurePreservesWholeAggregate(t *testing.T) {
 			t.Parallel()
 
 			database, _ := setupDatabase(t)
-			created, err := database.CreateChair(t.Context(), initialTitle, postgres.ChairCreate{
-				Description3: new("retained"),
-				Type:         domain.ABC,
-			})
+			created, err := database.Create(t.Context(), initialTitle, map[string]any{chairName: map[string]any{
+				chairDescriptionField: new("retained"),
+				chairTypeField:        domain.ABC,
+			}})
 			require.NoError(t, err)
 
-			updated, err := test.update(t.Context(), database, created.ID)
+			updated, err := database.Update(t.Context(), created.ID, test.title, test.satellite)
 			require.ErrorIs(t, err, test.want)
 			require.Nil(t, updated)
 
@@ -287,13 +339,17 @@ func TestMixedListFilteringAndPagination(t *testing.T) {
 	t.Parallel()
 
 	database, _ := setupDatabase(t)
-	tool, err := database.CreateTool(t.Context(), "tool", postgres.ToolCreate{})
+	tool, err := database.Create(t.Context(), toolName, map[string]any{toolName: map[string]any{}})
 	require.NoError(t, err)
 
-	table, err := database.CreateTable(t.Context(), "table", postgres.TableCreate{})
+	table, err := database.Create(t.Context(), tableName, map[string]any{tableName: map[string]any{}})
 	require.NoError(t, err)
 
-	chair, err := database.CreateChair(t.Context(), "chair", postgres.ChairCreate{Type: domain.ABC})
+	chair, err := database.Create(
+		t.Context(),
+		chairName,
+		map[string]any{chairName: map[string]any{chairTypeField: domain.ABC}},
+	)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -326,6 +382,34 @@ func TestMixedListFilteringAndPagination(t *testing.T) {
 	}
 }
 
+func TestListValidatesPagination(t *testing.T) {
+	t.Parallel()
+
+	database, _ := setupDatabase(t)
+
+	tests := []struct {
+		name    string
+		input   postgres.ListInput
+		wantErr error
+	}{
+		{name: "minimum", input: postgres.ListInput{Limit: 1}},
+		{name: "maximum", input: postgres.ListInput{Limit: 100, Offset: 100}},
+		{name: "zero limit", input: postgres.ListInput{}, wantErr: postgres.ErrInvalidInput},
+		{name: "negative limit", input: postgres.ListInput{Limit: -1}, wantErr: postgres.ErrInvalidInput},
+		{name: "large limit", input: postgres.ListInput{Limit: 101}, wantErr: postgres.ErrInvalidInput},
+		{name: "negative offset", input: postgres.ListInput{Limit: 20, Offset: -1}, wantErr: postgres.ErrInvalidInput},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			items, err := database.List(t.Context(), test.input)
+			require.ErrorIs(t, err, test.wantErr)
+			require.Empty(t, items)
+		})
+	}
+}
+
 func TestWriteFailureRollsBack(t *testing.T) {
 	t.Parallel()
 
@@ -338,15 +422,19 @@ func TestWriteFailureRollsBack(t *testing.T) {
 			name:    "create second write",
 			trigger: `CREATE TRIGGER fail_write BEFORE INSERT ON chairs FOR EACH ROW EXECUTE FUNCTION reject_write()`,
 			write: func(ctx context.Context, database *postgres.DB, _ int64) (*domain.Main, error) {
-				return database.CreateChair(ctx, changedTitle, postgres.ChairCreate{Type: domain.CDE})
+				return database.Create(
+					ctx,
+					changedTitle,
+					map[string]any{chairName: map[string]any{chairTypeField: domain.CDE}},
+				)
 			},
 		},
 		{
 			name:    "update second write",
 			trigger: `CREATE TRIGGER fail_write BEFORE UPDATE ON chairs FOR EACH ROW EXECUTE FUNCTION reject_write()`,
 			write: func(ctx context.Context, database *postgres.DB, id int64) (*domain.Main, error) {
-				return database.UpdateChair(ctx, id, graphql.OmittableOf(new(changedTitle)),
-					postgres.ChairUpdate{Type: graphql.OmittableOf(new(domain.CDE))})
+				return database.Update(ctx, id, graphql.OmittableOf(new(changedTitle)),
+					graphql.OmittableOf(map[string]any{chairName: map[string]any{chairTypeField: new(domain.CDE)}}))
 			},
 		},
 		{
@@ -361,7 +449,11 @@ func TestWriteFailureRollsBack(t *testing.T) {
 			trigger: `CREATE CONSTRAINT TRIGGER fail_write AFTER INSERT ON chairs
 DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_write()`,
 			write: func(ctx context.Context, database *postgres.DB, _ int64) (*domain.Main, error) {
-				return database.CreateChair(ctx, changedTitle, postgres.ChairCreate{Type: domain.CDE})
+				return database.Create(
+					ctx,
+					changedTitle,
+					map[string]any{chairName: map[string]any{chairTypeField: domain.CDE}},
+				)
 			},
 		},
 	}
@@ -372,10 +464,10 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_write()`,
 
 			database, pool := setupDatabase(t)
 			ctx := t.Context()
-			created, err := database.CreateChair(ctx, initialTitle, postgres.ChairCreate{
-				Description3: new("retained"),
-				Type:         domain.ABC,
-			})
+			created, err := database.Create(ctx, initialTitle, map[string]any{chairName: map[string]any{
+				chairDescriptionField: new("retained"),
+				chairTypeField:        domain.ABC,
+			}})
 			require.NoError(t, err)
 
 			var beforeMain, beforeChair, afterMain, afterChair string
@@ -438,8 +530,8 @@ func TestConcurrentMainWrites(t *testing.T) {
 		{
 			name: "delete and update",
 			second: func(ctx context.Context, database *postgres.DB, id int64) error {
-				_, err := database.UpdateChair(ctx, id, graphql.OmittableOf(new(changedTitle)),
-					postgres.ChairUpdate{Type: graphql.OmittableOf(new(domain.CDE))})
+				_, err := database.Update(ctx, id, graphql.OmittableOf(new(changedTitle)),
+					graphql.OmittableOf(map[string]any{chairName: map[string]any{chairTypeField: new(domain.CDE)}}))
 				if err != nil {
 					return fmt.Errorf("concurrent chair update: %w", err)
 				}
@@ -461,7 +553,11 @@ func TestConcurrentMainWrites(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 
-			created, err := database.CreateChair(ctx, initialTitle, postgres.ChairCreate{Type: domain.ABC})
+			created, err := database.Create(
+				ctx,
+				initialTitle,
+				map[string]any{chairName: map[string]any{chairTypeField: domain.ABC}},
+			)
 			require.NoError(t, err)
 
 			gate, err := pool.Begin(ctx)

@@ -24,12 +24,14 @@ import (
 )
 
 const (
-	toolBranch      = "tool"
-	tableBranch     = "table"
-	chairBranch     = "chair"
-	toolDescription = "description1"
-	testLogLevel    = "info"
-	testLogEncoding = "json"
+	toolBranch       = "tool"
+	tableBranch      = "table"
+	chairBranch      = "chair"
+	toolDescription  = "description1"
+	chairDescription = "description3"
+	chairTypeField   = "type"
+	testLogLevel     = "info"
+	testLogEncoding  = "json"
 )
 
 func sampleMain(kind domain.Kind) *domain.Main {
@@ -216,7 +218,7 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 			valid: map[string]any{},
 			expect: func(writer *MockMainWriter) {
 				writer.EXPECT().
-					CreateTool(gomock.Any(), "", postgres.ToolCreate{}).
+					Create(gomock.Any(), "", map[string]any{toolBranch: map[string]any{}}).
 					Return(sampleMain(domain.Tools), nil)
 			},
 		},
@@ -224,8 +226,9 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 			name: "update", typ: "ToolUpdateInput", input: "{update:{id:\"1\",satellite:{tool:$branch}}}",
 			valid: map[string]any{toolDescription: nil},
 			expect: func(writer *MockMainWriter) {
-				patch := postgres.ToolUpdate{Description1: graphql.OmittableOf[*string](nil)}
-				writer.EXPECT().UpdateTool(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
+				satellite := map[string]any{toolBranch: map[string]any{toolDescription: (*string)(nil)}}
+				writer.EXPECT().
+					Update(gomock.Any(), int64(1), graphql.Omittable[*string]{}, graphql.OmittableOf(satellite)).
 					Return(sampleMain(domain.Tools), nil)
 			},
 		},
@@ -284,32 +287,11 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 
 	branches := []struct {
 		name, field string
-		expect      func(*MockMainWriter, graphql.Omittable[*string])
+		kind        domain.Kind
 	}{
-		{
-			name:  toolBranch,
-			field: toolDescription,
-			expect: func(writer *MockMainWriter, value graphql.Omittable[*string]) {
-				writer.EXPECT().UpdateTool(gomock.Any(), int64(1), graphql.Omittable[*string]{},
-					postgres.ToolUpdate{Description1: value}).Return(sampleMain(domain.Tools), nil)
-			},
-		},
-		{
-			name:  tableBranch,
-			field: "description2",
-			expect: func(writer *MockMainWriter, value graphql.Omittable[*string]) {
-				writer.EXPECT().UpdateTable(gomock.Any(), int64(1), graphql.Omittable[*string]{},
-					postgres.TableUpdate{Description2: value}).Return(sampleMain(domain.Tables), nil)
-			},
-		},
-		{
-			name:  chairBranch,
-			field: "description3",
-			expect: func(writer *MockMainWriter, value graphql.Omittable[*string]) {
-				writer.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{},
-					postgres.ChairUpdate{Description3: value}).Return(sampleMain(domain.Chairs), nil)
-			},
-		},
+		{name: toolBranch, field: toolDescription, kind: domain.Tools},
+		{name: tableBranch, field: "description2", kind: domain.Tables},
+		{name: chairBranch, field: chairDescription, kind: domain.Chairs},
 	}
 
 	values := []struct {
@@ -327,7 +309,10 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 				controller := gomock.NewController(t)
 				reader := NewMockMainReader(controller)
 				writer := NewMockMainWriter(controller)
-				branch.expect(writer, graphql.OmittableOf(value.value))
+				satellite := map[string]any{branch.name: map[string]any{branch.field: value.value}}
+				writer.EXPECT().
+					Update(gomock.Any(), int64(1), graphql.Omittable[*string]{}, graphql.OmittableOf(satellite)).
+					Return(sampleMain(branch.kind), nil)
 				result := requestGraphQL(t, NewHandler(reader, writer),
 					"mutation($input:MainMutationInput!){main(input:$input){main{id}}}",
 					map[string]any{"input": map[string]any{"update": map[string]any{
@@ -351,7 +336,8 @@ func TestTitleOnlyBinding(t *testing.T) {
 			controller := gomock.NewController(t)
 			reader := NewMockMainReader(controller)
 			writer := NewMockMainWriter(controller)
-			writer.EXPECT().UpdateMain(gomock.Any(), int64(1), graphql.OmittableOf(&title)).
+			writer.EXPECT().
+				Update(gomock.Any(), int64(1), graphql.OmittableOf(&title), graphql.Omittable[map[string]any]{}).
 				Return(sampleMain(domain.Tools), nil)
 			result := requestGraphQL(t, NewHandler(reader, writer),
 				"mutation($title:String){main(input:{update:{id:1,title:$title}}){main{id}}}",
@@ -365,15 +351,15 @@ func TestPatchVariablePresence(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		variables   map[string]any
-		description graphql.Omittable[*string]
+		name      string
+		variables map[string]any
+		patch     map[string]any
 	}{
-		{name: "missing"},
+		{name: "missing", patch: map[string]any{chairTypeField: new(domain.CDE)}},
 		{name: "null", variables: map[string]any{"description": nil},
-			description: graphql.OmittableOf[*string](nil)},
+			patch: map[string]any{chairTypeField: new(domain.CDE), chairDescription: (*string)(nil)}},
 		{name: "provided", variables: map[string]any{"description": "value"},
-			description: graphql.OmittableOf(new("value"))},
+			patch: map[string]any{chairTypeField: new(domain.CDE), chairDescription: new("value")}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -381,11 +367,9 @@ func TestPatchVariablePresence(t *testing.T) {
 			controller := gomock.NewController(t)
 			reader := NewMockMainReader(controller)
 			writer := NewMockMainWriter(controller)
-			patch := postgres.ChairUpdate{
-				Description3: test.description,
-				Type:         graphql.OmittableOf(new(domain.CDE)),
-			}
-			writer.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
+			satellite := map[string]any{chairBranch: test.patch}
+			writer.EXPECT().
+				Update(gomock.Any(), int64(1), graphql.Omittable[*string]{}, graphql.OmittableOf(satellite)).
 				Return(sampleMain(domain.Chairs), nil)
 			result := requestGraphQL(t, NewHandler(reader, writer),
 				`mutation($description:String){
@@ -631,36 +615,6 @@ func TestListInputMapping(t *testing.T) {
 	}
 }
 
-func TestInputsRejectedBeforeOpeningDatabase(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct{ name, query string }{
-		{name: "empty update", query: `mutation{main(input:{update:{id:"1"}}){main{id}}}`},
-		{name: "null title", query: `mutation{main(input:{update:{id:"1",title:null}}){main{id}}}`},
-		{name: "null satellite", query: `mutation{main(input:{update:{id:"1",satellite:null}}){main{id}}}`},
-		{name: "empty tool patch", query: `mutation{main(input:{update:{id:"1",satellite:{tool:{}}}}){main{id}}}`},
-		{name: "empty table patch", query: `mutation{main(input:{update:{id:"1",satellite:{table:{}}}}){main{id}}}`},
-		{name: "empty chair patch", query: `mutation{main(input:{update:{id:"1",satellite:{chair:{}}}}){main{id}}}`},
-		{
-			name:  "null chair type",
-			query: `mutation{main(input:{update:{id:"1",satellite:{chair:{type:null}}}}){main{id}}}`,
-		},
-		{name: "limit zero", query: `{main(limit:0){id}}`},
-		{name: "limit too large", query: `{main(limit:101){id}}`},
-		{name: "negative offset", query: `{main(offset:-1){id}}`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			database := &postgres.DB{}
-			result := requestGraphQL(t, NewHandler(database, database), test.query, nil)
-			require.Len(t, result.Errors, 1)
-			require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
-		})
-	}
-}
-
 func TestSchemaHasOnlyRequiredBusinessRoots(t *testing.T) {
 	t.Parallel()
 	controller := gomock.NewController(t)
@@ -743,20 +697,14 @@ func TestCreateInputAndOutput(t *testing.T) {
 
 	tests := []struct {
 		kind, typename, contents, fragment string
-		expect                             func(*MockMainWriter, *domain.Main)
+		input                              map[string]any
 	}{
 		{kind: toolBranch, typename: "Tool", contents: "{}", fragment: toolDescription,
-			expect: func(writer *MockMainWriter, value *domain.Main) {
-				writer.EXPECT().CreateTool(gomock.Any(), "", postgres.ToolCreate{}).Return(value, nil)
-			}},
+			input: map[string]any{}},
 		{kind: tableBranch, typename: "Table", contents: "{}", fragment: "description2",
-			expect: func(writer *MockMainWriter, value *domain.Main) {
-				writer.EXPECT().CreateTable(gomock.Any(), "", postgres.TableCreate{}).Return(value, nil)
-			}},
+			input: map[string]any{}},
 		{kind: chairBranch, typename: "Chair", contents: "{type:abc}", fragment: "description3 type",
-			expect: func(writer *MockMainWriter, value *domain.Main) {
-				writer.EXPECT().CreateChair(gomock.Any(), "", postgres.ChairCreate{Type: domain.ABC}).Return(value, nil)
-			}},
+			input: map[string]any{chairTypeField: domain.ABC}},
 	}
 	for _, test := range tests {
 		t.Run(test.kind, func(t *testing.T) {
@@ -770,7 +718,7 @@ func TestCreateInputAndOutput(t *testing.T) {
 				chairBranch: domain.Chairs,
 			}[test.kind]
 			value := sampleMain(kind)
-			test.expect(writer, value)
+			writer.EXPECT().Create(gomock.Any(), "", map[string]any{test.kind: test.input}).Return(value, nil)
 
 			result := requestGraphQL(
 				t,

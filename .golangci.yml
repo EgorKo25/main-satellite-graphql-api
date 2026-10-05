@@ -85,15 +85,6 @@ linters:
       - path: '^tests/integration/'
         linters:
           - paralleltest
-      # Concrete satellite SQL and fields differ; keep explicit typed handlers.
-      - path: '^internal/postgres/(tool|table|chair)\.go$'
-        linters:
-          - dupl
-      # Dispatch passes errors to Mutation.main, which adds operation context.
-      - path: '^internal/graph/resolver\.go$'
-        source: 'return r\.database\.(Create(Tool|Table|Chair)|Update(Main|Tool|Table|Chair))\('
-        linters:
-          - wrapcheck
   settings:
     cyclop:
       max-complexity: 10

@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
-	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
-	"github.com/jackc/pgx/v5"
+	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,19 +36,12 @@ func New(ctx context.Context, cfg config.Database) (*DB, error) {
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
 
-	database := &DB{pool: pool}
-	database.deleters = map[domain.Kind]func(context.Context, pgx.Tx, *domain.Main, time.Time) error{
-		domain.Tools:  database.deleteTool,
-		domain.Tables: database.deleteTable,
-		domain.Chairs: database.deleteChair,
-	}
-
-	return database, nil
+	return &DB{pool: pool, validator: validator.New(validator.WithRequiredStructEnabled())}, nil
 }
 
 type DB struct {
-	pool     *pgxpool.Pool
-	deleters map[domain.Kind]func(context.Context, pgx.Tx, *domain.Main, time.Time) error
+	pool      *pgxpool.Pool
+	validator *validator.Validate
 }
 
 func (db *DB) Close() {

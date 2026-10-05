@@ -15,6 +15,34 @@ import (
 
 const typenameField = "__typename"
 
+func TestInvalidInputsRejectedBeforeMainLookup(t *testing.T) {
+	tests := []struct{ name, query string }{
+		{name: "empty update", query: `mutation{main(input:{update:{id:"1"}}){main{id}}}`},
+		{name: "null title", query: `mutation{main(input:{update:{id:"1",title:null}}){main{id}}}`},
+		{name: "null satellite", query: `mutation{main(input:{update:{id:"1",satellite:null}}){main{id}}}`},
+		{name: "empty tool patch", query: `mutation{main(input:{update:{id:"1",satellite:{tool:{}}}}){main{id}}}`},
+		{name: "empty table patch", query: `mutation{main(input:{update:{id:"1",satellite:{table:{}}}}){main{id}}}`},
+		{name: "empty chair patch", query: `mutation{main(input:{update:{id:"1",satellite:{chair:{}}}}){main{id}}}`},
+		{
+			name:  "null chair type",
+			query: `mutation{main(input:{update:{id:"1",satellite:{chair:{type:null}}}}){main{id}}}`,
+		},
+		{name: "limit zero", query: `{main(limit:0){id}}`},
+		{name: "limit too large", query: `{main(limit:101){id}}`},
+		{name: "negative offset", query: `{main(offset:-1){id}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testFixture := setup(t)
+			before := testFixture.snapshot(t)
+			result := testFixture.gql(t, test.query, nil)
+			require.Len(t, result.Errors, 1)
+			require.Equal(t, "BAD_USER_INPUT", result.Errors[0].Extensions["code"])
+			require.JSONEq(t, before, testFixture.snapshot(t))
+		})
+	}
+}
+
 func TestContendingWritesWaitAndRecheckState(t *testing.T) {
 	for _, testCase := range []struct{ name, first, second, wantCode, wantTitle, wantType string }{
 		{"update_then_delete", updateOperation, deleteOperation, "", updatedValue, chairCDE},

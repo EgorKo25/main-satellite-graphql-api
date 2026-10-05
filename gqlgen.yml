@@ -39,23 +39,18 @@ models:
       cde:
         value: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.CDE
   ToolCreateInput:
-    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ToolCreate
-    fields:
-      description1:
-        omittable: false
+    model: "map[string]interface{}"
   TableCreateInput:
-    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.TableCreate
-    fields:
-      description2:
-        omittable: false
+    model: "map[string]interface{}"
   ChairCreateInput:
-    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ChairCreate
-    fields:
-      description3:
-        omittable: false
+    model: "map[string]interface{}"
   ToolUpdateInput:
-    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ToolUpdate
+    model: "map[string]interface{}"
   TableUpdateInput:
-    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.TableUpdate
+    model: "map[string]interface{}"
   ChairUpdateInput:
-    model: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres.ChairUpdate
+    model: "map[string]interface{}"
+  SatelliteCreateInput:
+    model: "map[string]interface{}"
+  SatelliteUpdateInput:
+    model: "map[string]interface{}"

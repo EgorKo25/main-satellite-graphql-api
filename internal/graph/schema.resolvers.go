@@ -29,9 +29,11 @@ func (r *mutationResolver) Main(
 
 	switch {
 	case input.Create.IsSet():
-		main, err = r.create(ctx, input.Create.Value())
+		create := input.Create.Value()
+		main, err = r.database.Create(ctx, create.Title, create.Satellite)
 	case input.Update.IsSet():
-		main, err = r.update(ctx, input.Update.Value())
+		update := input.Update.Value()
+		main, err = r.database.Update(ctx, update.ID, update.Title, update.Satellite)
 	case input.Delete.IsSet():
 		id := input.Delete.Value().ID
 		if err = r.database.Delete(ctx, id); err != nil {
