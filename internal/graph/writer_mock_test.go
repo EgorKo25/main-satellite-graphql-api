@@ -15,7 +15,6 @@ import (
 
 	graphql "github.com/99designs/gqlgen/graphql"
 	domain "github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
-	postgres "github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -43,49 +42,19 @@ func (m *MockMainWriter) EXPECT() *MockMainWriterMockRecorder {
 	return m.recorder
 }
 
-// CreateChair mocks base method.
-func (m *MockMainWriter) CreateChair(arg0 context.Context, arg1 string, arg2 postgres.ChairCreate) (*domain.Main, error) {
+// Create mocks base method.
+func (m *MockMainWriter) Create(arg0 context.Context, arg1 string, arg2 map[string]any) (*domain.Main, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateChair", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "Create", arg0, arg1, arg2)
 	ret0, _ := ret[0].(*domain.Main)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CreateChair indicates an expected call of CreateChair.
-func (mr *MockMainWriterMockRecorder) CreateChair(arg0, arg1, arg2 any) *gomock.Call {
+// Create indicates an expected call of Create.
+func (mr *MockMainWriterMockRecorder) Create(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateChair", reflect.TypeOf((*MockMainWriter)(nil).CreateChair), arg0, arg1, arg2)
-}
-
-// CreateTable mocks base method.
-func (m *MockMainWriter) CreateTable(arg0 context.Context, arg1 string, arg2 postgres.TableCreate) (*domain.Main, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateTable", arg0, arg1, arg2)
-	ret0, _ := ret[0].(*domain.Main)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreateTable indicates an expected call of CreateTable.
-func (mr *MockMainWriterMockRecorder) CreateTable(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTable", reflect.TypeOf((*MockMainWriter)(nil).CreateTable), arg0, arg1, arg2)
-}
-
-// CreateTool mocks base method.
-func (m *MockMainWriter) CreateTool(arg0 context.Context, arg1 string, arg2 postgres.ToolCreate) (*domain.Main, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateTool", arg0, arg1, arg2)
-	ret0, _ := ret[0].(*domain.Main)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreateTool indicates an expected call of CreateTool.
-func (mr *MockMainWriterMockRecorder) CreateTool(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTool", reflect.TypeOf((*MockMainWriter)(nil).CreateTool), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockMainWriter)(nil).Create), arg0, arg1, arg2)
 }
 
 // Delete mocks base method.
@@ -102,62 +71,17 @@ func (mr *MockMainWriterMockRecorder) Delete(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockMainWriter)(nil).Delete), arg0, arg1)
 }
 
-// UpdateChair mocks base method.
-func (m *MockMainWriter) UpdateChair(arg0 context.Context, arg1 int64, arg2 graphql.Omittable[*string], arg3 postgres.ChairUpdate) (*domain.Main, error) {
+// Update mocks base method.
+func (m *MockMainWriter) Update(arg0 context.Context, arg1 int64, arg2 graphql.Omittable[*string], arg3 graphql.Omittable[map[string]any]) (*domain.Main, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateChair", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "Update", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(*domain.Main)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// UpdateChair indicates an expected call of UpdateChair.
-func (mr *MockMainWriterMockRecorder) UpdateChair(arg0, arg1, arg2, arg3 any) *gomock.Call {
+// Update indicates an expected call of Update.
+func (mr *MockMainWriterMockRecorder) Update(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateChair", reflect.TypeOf((*MockMainWriter)(nil).UpdateChair), arg0, arg1, arg2, arg3)
-}
-
-// UpdateMain mocks base method.
-func (m *MockMainWriter) UpdateMain(arg0 context.Context, arg1 int64, arg2 graphql.Omittable[*string]) (*domain.Main, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateMain", arg0, arg1, arg2)
-	ret0, _ := ret[0].(*domain.Main)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UpdateMain indicates an expected call of UpdateMain.
-func (mr *MockMainWriterMockRecorder) UpdateMain(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateMain", reflect.TypeOf((*MockMainWriter)(nil).UpdateMain), arg0, arg1, arg2)
-}
-
-// UpdateTable mocks base method.
-func (m *MockMainWriter) UpdateTable(arg0 context.Context, arg1 int64, arg2 graphql.Omittable[*string], arg3 postgres.TableUpdate) (*domain.Main, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateTable", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(*domain.Main)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UpdateTable indicates an expected call of UpdateTable.
-func (mr *MockMainWriterMockRecorder) UpdateTable(arg0, arg1, arg2, arg3 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTable", reflect.TypeOf((*MockMainWriter)(nil).UpdateTable), arg0, arg1, arg2, arg3)
-}
-
-// UpdateTool mocks base method.
-func (m *MockMainWriter) UpdateTool(arg0 context.Context, arg1 int64, arg2 graphql.Omittable[*string], arg3 postgres.ToolUpdate) (*domain.Main, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateTool", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(*domain.Main)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UpdateTool indicates an expected call of UpdateTool.
-func (mr *MockMainWriterMockRecorder) UpdateTool(arg0, arg1, arg2, arg3 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTool", reflect.TypeOf((*MockMainWriter)(nil).UpdateTool), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockMainWriter)(nil).Update), arg0, arg1, arg2, arg3)
 }

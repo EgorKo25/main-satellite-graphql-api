@@ -17,7 +17,6 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/model"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/scalar"
-	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -2553,8 +2552,8 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
-func (ec *executionContext) unmarshalInputChairCreateInput(ctx context.Context, obj any) (postgres.ChairCreate, error) {
-	var it postgres.ChairCreate
+func (ec *executionContext) unmarshalInputChairCreateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2565,6 +2564,7 @@ func (ec *executionContext) unmarshalInputChairCreateInput(ctx context.Context, 
 	}
 
 	fieldsInOrder := [...]string{"description3", "type"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2577,21 +2577,21 @@ func (ec *executionContext) unmarshalInputChairCreateInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Description3 = data
+			it["description3"] = data
 		case "type":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("type"))
 			data, err := ec.unmarshalNChairType2githubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋdomainᚐChairType(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Type = data
+			it["type"] = data
 		}
 	}
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputChairUpdateInput(ctx context.Context, obj any) (postgres.ChairUpdate, error) {
-	var it postgres.ChairUpdate
+func (ec *executionContext) unmarshalInputChairUpdateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2602,6 +2602,7 @@ func (ec *executionContext) unmarshalInputChairUpdateInput(ctx context.Context, 
 	}
 
 	fieldsInOrder := [...]string{"description3", "type"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2614,14 +2615,14 @@ func (ec *executionContext) unmarshalInputChairUpdateInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Description3 = graphql.OmittableOf(data)
+			it["description3"] = data
 		case "type":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("type"))
 			data, err := ec.unmarshalOChairType2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋdomainᚐChairType(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Type = graphql.OmittableOf(data)
+			it["type"] = data
 		}
 	}
 	return it, nil
@@ -2654,7 +2655,7 @@ func (ec *executionContext) unmarshalInputMainCreateInput(ctx context.Context, o
 			it.Title = data
 		case "satellite":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("satellite"))
-			data, err := ec.unmarshalNSatelliteCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋgraphᚋmodelᚐSatelliteCreateInput(ctx, v)
+			data, err := ec.unmarshalNSatelliteCreateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -2772,7 +2773,7 @@ func (ec *executionContext) unmarshalInputMainUpdateInput(ctx context.Context, o
 			it.Title = graphql.OmittableOf(data)
 		case "satellite":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("satellite"))
-			data, err := ec.unmarshalOSatelliteUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋgraphᚋmodelᚐSatelliteUpdateInput(ctx, v)
+			data, err := ec.unmarshalOSatelliteUpdateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
@@ -2782,8 +2783,8 @@ func (ec *executionContext) unmarshalInputMainUpdateInput(ctx context.Context, o
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputSatelliteCreateInput(ctx context.Context, obj any) (model.SatelliteCreateInput, error) {
-	var it model.SatelliteCreateInput
+func (ec *executionContext) unmarshalInputSatelliteCreateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2794,6 +2795,7 @@ func (ec *executionContext) unmarshalInputSatelliteCreateInput(ctx context.Conte
 	}
 
 	fieldsInOrder := [...]string{"tool", "table", "chair"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2802,32 +2804,32 @@ func (ec *executionContext) unmarshalInputSatelliteCreateInput(ctx context.Conte
 		switch k {
 		case "tool":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tool"))
-			data, err := ec.unmarshalOToolCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐToolCreate(ctx, v)
+			data, err := ec.unmarshalOToolCreateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Tool = graphql.OmittableOf(data)
+			it["tool"] = data
 		case "table":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("table"))
-			data, err := ec.unmarshalOTableCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐTableCreate(ctx, v)
+			data, err := ec.unmarshalOTableCreateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Table = graphql.OmittableOf(data)
+			it["table"] = data
 		case "chair":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("chair"))
-			data, err := ec.unmarshalOChairCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐChairCreate(ctx, v)
+			data, err := ec.unmarshalOChairCreateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Chair = graphql.OmittableOf(data)
+			it["chair"] = data
 		}
 	}
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputSatelliteUpdateInput(ctx context.Context, obj any) (model.SatelliteUpdateInput, error) {
-	var it model.SatelliteUpdateInput
+func (ec *executionContext) unmarshalInputSatelliteUpdateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2838,6 +2840,7 @@ func (ec *executionContext) unmarshalInputSatelliteUpdateInput(ctx context.Conte
 	}
 
 	fieldsInOrder := [...]string{"tool", "table", "chair"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2846,32 +2849,32 @@ func (ec *executionContext) unmarshalInputSatelliteUpdateInput(ctx context.Conte
 		switch k {
 		case "tool":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tool"))
-			data, err := ec.unmarshalOToolUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐToolUpdate(ctx, v)
+			data, err := ec.unmarshalOToolUpdateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Tool = graphql.OmittableOf(data)
+			it["tool"] = data
 		case "table":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("table"))
-			data, err := ec.unmarshalOTableUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐTableUpdate(ctx, v)
+			data, err := ec.unmarshalOTableUpdateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Table = graphql.OmittableOf(data)
+			it["table"] = data
 		case "chair":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("chair"))
-			data, err := ec.unmarshalOChairUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐChairUpdate(ctx, v)
+			data, err := ec.unmarshalOChairUpdateInput2map(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Chair = graphql.OmittableOf(data)
+			it["chair"] = data
 		}
 	}
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputTableCreateInput(ctx context.Context, obj any) (postgres.TableCreate, error) {
-	var it postgres.TableCreate
+func (ec *executionContext) unmarshalInputTableCreateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2882,6 +2885,7 @@ func (ec *executionContext) unmarshalInputTableCreateInput(ctx context.Context, 
 	}
 
 	fieldsInOrder := [...]string{"description2"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2894,14 +2898,14 @@ func (ec *executionContext) unmarshalInputTableCreateInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Description2 = data
+			it["description2"] = data
 		}
 	}
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputTableUpdateInput(ctx context.Context, obj any) (postgres.TableUpdate, error) {
-	var it postgres.TableUpdate
+func (ec *executionContext) unmarshalInputTableUpdateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2912,6 +2916,7 @@ func (ec *executionContext) unmarshalInputTableUpdateInput(ctx context.Context, 
 	}
 
 	fieldsInOrder := [...]string{"description2"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2924,14 +2929,14 @@ func (ec *executionContext) unmarshalInputTableUpdateInput(ctx context.Context, 
 			if err != nil {
 				return it, err
 			}
-			it.Description2 = graphql.OmittableOf(data)
+			it["description2"] = data
 		}
 	}
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputToolCreateInput(ctx context.Context, obj any) (postgres.ToolCreate, error) {
-	var it postgres.ToolCreate
+func (ec *executionContext) unmarshalInputToolCreateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2942,6 +2947,7 @@ func (ec *executionContext) unmarshalInputToolCreateInput(ctx context.Context, o
 	}
 
 	fieldsInOrder := [...]string{"description1"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2954,14 +2960,14 @@ func (ec *executionContext) unmarshalInputToolCreateInput(ctx context.Context, o
 			if err != nil {
 				return it, err
 			}
-			it.Description1 = data
+			it["description1"] = data
 		}
 	}
 	return it, nil
 }
 
-func (ec *executionContext) unmarshalInputToolUpdateInput(ctx context.Context, obj any) (postgres.ToolUpdate, error) {
-	var it postgres.ToolUpdate
+func (ec *executionContext) unmarshalInputToolUpdateInput(ctx context.Context, obj any) (map[string]any, error) {
+	var it map[string]any
 	if obj == nil {
 		return it, nil
 	}
@@ -2972,6 +2978,7 @@ func (ec *executionContext) unmarshalInputToolUpdateInput(ctx context.Context, o
 	}
 
 	fieldsInOrder := [...]string{"description1"}
+	it = make(map[string]any, len(asMap))
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -2984,7 +2991,7 @@ func (ec *executionContext) unmarshalInputToolUpdateInput(ctx context.Context, o
 			if err != nil {
 				return it, err
 			}
-			it.Description1 = graphql.OmittableOf(data)
+			it["description1"] = data
 		}
 	}
 	return it, nil
@@ -3945,9 +3952,9 @@ func (ec *executionContext) marshalNSatellite2githubᚗcomᚋEgorKo25ᚋmainᚑs
 	return ec._Satellite(ctx, sel, v)
 }
 
-func (ec *executionContext) unmarshalNSatelliteCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋgraphᚋmodelᚐSatelliteCreateInput(ctx context.Context, v any) (*model.SatelliteCreateInput, error) {
+func (ec *executionContext) unmarshalNSatelliteCreateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	res, err := ec.unmarshalInputSatelliteCreateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalNString2string(ctx context.Context, v any) (string, error) {
@@ -4152,12 +4159,12 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	return res
 }
 
-func (ec *executionContext) unmarshalOChairCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐChairCreate(ctx context.Context, v any) (*postgres.ChairCreate, error) {
+func (ec *executionContext) unmarshalOChairCreateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputChairCreateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalOChairType2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋdomainᚐChairType(ctx context.Context, v any) (*domain.ChairType, error) {
@@ -4190,12 +4197,12 @@ var (
 	}
 )
 
-func (ec *executionContext) unmarshalOChairUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐChairUpdate(ctx context.Context, v any) (*postgres.ChairUpdate, error) {
+func (ec *executionContext) unmarshalOChairUpdateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputChairUpdateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalOID2ᚖint64(ctx context.Context, v any) (*int64, error) {
@@ -4254,12 +4261,12 @@ func (ec *executionContext) unmarshalOMainUpdateInput2ᚖgithubᚗcomᚋEgorKo25
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalOSatelliteUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋgraphᚋmodelᚐSatelliteUpdateInput(ctx context.Context, v any) (*model.SatelliteUpdateInput, error) {
+func (ec *executionContext) unmarshalOSatelliteUpdateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputSatelliteUpdateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalOString2ᚖstring(ctx context.Context, v any) (*string, error) {
@@ -4280,20 +4287,20 @@ func (ec *executionContext) marshalOString2ᚖstring(ctx context.Context, sel as
 	return res
 }
 
-func (ec *executionContext) unmarshalOTableCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐTableCreate(ctx context.Context, v any) (*postgres.TableCreate, error) {
+func (ec *executionContext) unmarshalOTableCreateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputTableCreateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalOTableUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐTableUpdate(ctx context.Context, v any) (*postgres.TableUpdate, error) {
+func (ec *executionContext) unmarshalOTableUpdateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputTableUpdateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) unmarshalOTime2ᚖtimeᚐTime(ctx context.Context, v any) (*time.Time, error) {
@@ -4314,20 +4321,20 @@ func (ec *executionContext) marshalOTime2ᚖtimeᚐTime(ctx context.Context, sel
 	return res
 }
 
-func (ec *executionContext) unmarshalOToolCreateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐToolCreate(ctx context.Context, v any) (*postgres.ToolCreate, error) {
+func (ec *executionContext) unmarshalOToolCreateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputToolCreateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalOToolUpdateInput2ᚖgithubᚗcomᚋEgorKo25ᚋmainᚑsatelliteᚑgraphqlᚑapiᚋinternalᚋpostgresᚐToolUpdate(ctx context.Context, v any) (*postgres.ToolUpdate, error) {
+func (ec *executionContext) unmarshalOToolUpdateInput2map(ctx context.Context, v any) (map[string]any, error) {
 	if v == nil {
 		return nil, nil
 	}
 	res, err := ec.unmarshalInputToolUpdateInput(ctx, v)
-	return &res, graphql.ErrorOnPath(ctx, err)
+	return res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValueᚄ(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {

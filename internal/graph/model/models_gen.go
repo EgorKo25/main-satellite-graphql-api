@@ -5,12 +5,11 @@ package model
 import (
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
-	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 )
 
 type MainCreateInput struct {
-	Title     string                `json:"title"`
-	Satellite *SatelliteCreateInput `json:"satellite"`
+	Title     string         `json:"title"`
+	Satellite map[string]any `json:"satellite"`
 }
 
 type MainDeleteInput struct {
@@ -29,25 +28,13 @@ type MainMutationPayload struct {
 }
 
 type MainUpdateInput struct {
-	ID        int64                                    `json:"id"`
-	Title     graphql.Omittable[*string]               `json:"title,omitempty"`
-	Satellite graphql.Omittable[*SatelliteUpdateInput] `json:"satellite,omitempty"`
+	ID        int64                             `json:"id"`
+	Title     graphql.Omittable[*string]        `json:"title,omitempty"`
+	Satellite graphql.Omittable[map[string]any] `json:"satellite,omitempty"`
 }
 
 type Mutation struct {
 }
 
 type Query struct {
-}
-
-type SatelliteCreateInput struct {
-	Tool  graphql.Omittable[*postgres.ToolCreate]  `json:"tool,omitempty"`
-	Table graphql.Omittable[*postgres.TableCreate] `json:"table,omitempty"`
-	Chair graphql.Omittable[*postgres.ChairCreate] `json:"chair,omitempty"`
-}
-
-type SatelliteUpdateInput struct {
-	Tool  graphql.Omittable[*postgres.ToolUpdate]  `json:"tool,omitempty"`
-	Table graphql.Omittable[*postgres.TableUpdate] `json:"table,omitempty"`
-	Chair graphql.Omittable[*postgres.ChairUpdate] `json:"chair,omitempty"`
 }

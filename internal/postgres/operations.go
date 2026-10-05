@@ -4,20 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
+	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 )
 
-func (db *DB) create(
-	ctx context.Context,
-	title string,
-	kind domain.Kind,
-	insert func(pgx.Tx, *domain.Main) error,
-) (*domain.Main, error) {
+var satelliteKinds = map[string]domain.Kind{
+	"tool":  domain.Tools,
+	"table": domain.Tables,
+	"chair": domain.Chairs,
+}
+
+func (db *DB) Create(ctx context.Context, title string, satellite map[string]any) (*domain.Main, error) {
+	kind, fields, err := satelliteInput(satellite)
+	if err != nil {
+		return nil, err
+	}
+
 	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return nil, fmt.Errorf("begin create: %w", err)
@@ -34,8 +42,25 @@ func (db *DB) create(
 		return nil, fmt.Errorf("insert Main: %w", err)
 	}
 
-	if err = insert(transaction, main); err != nil {
-		return nil, fmt.Errorf("create satellite: %w", err)
+	columns := maps.Clone(fields)
+	columns["id"] = main.SubID
+	columns["main_id"] = main.ID
+	columns["created_at"] = main.CreatedAt
+	columns["update_at"] = main.CreatedAt
+
+	query, args, err := squirrel.Insert(string(kind)).SetMap(columns).
+		PlaceholderFormat(squirrel.Dollar).Suffix(";").ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build satellite insert: %w", err)
+	}
+
+	tag, err := transaction.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("insert satellite: %w", err)
+	}
+
+	if tag.RowsAffected() != 1 {
+		return nil, fmt.Errorf("insert satellite: expected one changed row, got %d", tag.RowsAffected())
 	}
 
 	result, err := db.readTx(ctx, transaction, main.ID)
@@ -50,27 +75,15 @@ func (db *DB) create(
 	return result, nil
 }
 
-func (db *DB) UpdateMain(
+func (db *DB) Update(
 	ctx context.Context,
 	mainID int64,
 	title graphql.Omittable[*string],
+	satellite graphql.Omittable[map[string]any],
 ) (*domain.Main, error) {
-	if !title.IsSet() {
-		return nil, fmt.Errorf("%w: update must change at least one field", ErrInvalidInput)
-	}
-
-	return db.update(ctx, mainID, title, "", nil)
-}
-
-func (db *DB) update(
-	ctx context.Context,
-	mainID int64,
-	title graphql.Omittable[*string],
-	kind domain.Kind,
-	apply func(pgx.Tx, *domain.Main, time.Time) error,
-) (*domain.Main, error) {
-	if title.IsSet() && title.Value() == nil {
-		return nil, fmt.Errorf("%w: title cannot be null", ErrInvalidInput)
+	kind, fields, err := updateInput(title, satellite)
+	if err != nil {
+		return nil, err
 	}
 
 	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
@@ -79,7 +92,7 @@ func (db *DB) update(
 	}
 	defer db.rollback(ctx, transaction)
 
-	result, err := db.applyUpdate(ctx, transaction, mainID, title, kind, apply)
+	result, err := db.applyUpdate(ctx, transaction, mainID, title, kind, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +110,7 @@ func (db *DB) applyUpdate(
 	mainID int64,
 	title graphql.Omittable[*string],
 	kind domain.Kind,
-	apply func(pgx.Tx, *domain.Main, time.Time) error,
+	fields map[string]any,
 ) (*domain.Main, error) {
 	main, err := db.lockMain(ctx, transaction, mainID)
 	if err != nil {
@@ -108,7 +121,7 @@ func (db *DB) applyUpdate(
 		return nil, ErrNotFound
 	}
 
-	if apply != nil && main.SubObj != kind {
+	if fields != nil && main.SubObj != kind {
 		return nil, ErrSatelliteTypeMismatch
 	}
 
@@ -127,9 +140,9 @@ func (db *DB) applyUpdate(
 		return nil, fmt.Errorf("update Main: expected one changed row, got %d", tag.RowsAffected())
 	}
 
-	if apply != nil {
-		if err = apply(transaction, main, now); err != nil {
-			return nil, fmt.Errorf("update satellite: %w", err)
+	if fields != nil {
+		if err = db.updateSatellite(ctx, transaction, main, fields, now); err != nil {
+			return nil, err
 		}
 	}
 
@@ -152,11 +165,6 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 		return ErrAlreadyDeleted
 	}
 
-	softDelete, ok := db.deleters[main.SubObj]
-	if !ok {
-		return fmt.Errorf("delete satellite: unknown satellite kind %q", main.SubObj)
-	}
-
 	now := time.Now().UTC()
 
 	tag, err := transaction.Exec(ctx, `
@@ -171,7 +179,7 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 		return fmt.Errorf("delete Main: expected one changed row, got %d", tag.RowsAffected())
 	}
 
-	if err = softDelete(ctx, transaction, main, now); err != nil {
+	if err = db.updateSatellite(ctx, transaction, main, map[string]any{"deleted_at": now}, now); err != nil {
 		return fmt.Errorf("delete satellite: %w", err)
 	}
 
@@ -181,6 +189,49 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 
 	if err = transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete: %w", err)
+	}
+
+	return nil
+}
+
+func (db *DB) updateSatellite(
+	ctx context.Context,
+	transaction pgx.Tx,
+	main *domain.Main,
+	fields map[string]any,
+	now time.Time,
+) error {
+	var table string
+
+	for _, kind := range satelliteKinds {
+		if main.SubObj == kind {
+			table = string(kind)
+
+			break
+		}
+	}
+
+	if table == "" {
+		return fmt.Errorf("update satellite: unknown satellite kind %q", main.SubObj)
+	}
+
+	columns := maps.Clone(fields)
+	columns["update_at"] = now
+
+	query, args, err := squirrel.Update(table).SetMap(columns).
+		Where(squirrel.Eq{"id": main.SubID, "main_id": main.ID, "deleted_at": nil}).
+		PlaceholderFormat(squirrel.Dollar).Suffix(";").ToSql()
+	if err != nil {
+		return fmt.Errorf("build satellite update: %w", err)
+	}
+
+	tag, err := transaction.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update satellite: %w", err)
+	}
+
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("update satellite: expected one changed row, got %d", tag.RowsAffected())
 	}
 
 	return nil

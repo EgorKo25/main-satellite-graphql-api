@@ -40,7 +40,7 @@ func TestListQueryCount(t *testing.T) {
 
 	database, inspection := setupDatabase(t)
 	for range 25 {
-		_, err := database.CreateTool(t.Context(), "bulk", postgres.ToolCreate{})
+		_, err := database.Create(t.Context(), "bulk", map[string]any{toolName: map[string]any{}})
 		require.NoError(t, err)
 	}
 

@@ -6,7 +6,6 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
-	"github.com/go-playground/validator/v10"
 )
 
 var (
@@ -14,7 +13,6 @@ var (
 	ErrNotFound              = errors.New("main was not found")
 	ErrAlreadyDeleted        = errors.New("main is already deleted")
 	ErrSatelliteTypeMismatch = errors.New("satellite type cannot be changed")
-	inputValidator           = validator.New(validator.WithRequiredStructEnabled())
 )
 
 type ListInput struct {
@@ -23,66 +21,55 @@ type ListInput struct {
 	Offset int `validate:"gte=0"`
 }
 
-func (input ListInput) Validate() error {
-	if err := inputValidator.Struct(input); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+func satelliteInput(satellite map[string]any) (domain.Kind, map[string]any, error) {
+	for branch, value := range satellite {
+		kind, known := satelliteKinds[branch]
+		if !known {
+			return "", nil, fmt.Errorf("%w: unknown satellite kind %q", ErrInvalidInput, branch)
+		}
+
+		fields, valid := value.(map[string]any)
+		if !valid || fields == nil {
+			return "", nil, fmt.Errorf("%w: satellite cannot be null", ErrInvalidInput)
+		}
+
+		return kind, fields, nil
 	}
 
-	return nil
+	return "", nil, fmt.Errorf("%w: satellite requires one selected type", ErrInvalidInput)
 }
 
-type ToolCreate struct {
-	Description1 *string
-}
-
-type TableCreate struct {
-	Description2 *string
-}
-
-type ChairCreate struct {
-	Description3 *string
-	Type         domain.ChairType
-}
-
-type ToolUpdate struct {
-	Description1 graphql.Omittable[*string]
-}
-
-func (input ToolUpdate) Validate() error {
-	if err := inputValidator.Var(input.Description1.IsSet(), "required"); err != nil {
-		return fmt.Errorf("%w: tool update must change description1", ErrInvalidInput)
+func updateInput(
+	title graphql.Omittable[*string],
+	satellite graphql.Omittable[map[string]any],
+) (domain.Kind, map[string]any, error) {
+	if title.IsSet() && title.Value() == nil {
+		return "", nil, fmt.Errorf("%w: title cannot be null", ErrInvalidInput)
 	}
 
-	return nil
-}
+	if !satellite.IsSet() {
+		if !title.IsSet() {
+			return "", nil, fmt.Errorf("%w: update must change at least one field", ErrInvalidInput)
+		}
 
-type TableUpdate struct {
-	Description2 graphql.Omittable[*string]
-}
-
-func (input TableUpdate) Validate() error {
-	if err := inputValidator.Var(input.Description2.IsSet(), "required"); err != nil {
-		return fmt.Errorf("%w: table update must change description2", ErrInvalidInput)
+		return "", nil, nil
 	}
 
-	return nil
-}
-
-type ChairUpdate struct {
-	Description3 graphql.Omittable[*string]
-	Type         graphql.Omittable[*domain.ChairType]
-}
-
-func (input ChairUpdate) Validate() error {
-	if err := inputValidator.Var(input.Description3.IsSet() || input.Type.IsSet(), "required"); err != nil {
-		return fmt.Errorf("%w: chair update must change at least one field", ErrInvalidInput)
+	kind, fields, err := satelliteInput(satellite.Value())
+	if err != nil {
+		return "", nil, err
 	}
 
-	if input.Type.IsSet() {
-		if err := inputValidator.Var(input.Type.Value(), "required"); err != nil {
-			return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	if len(fields) == 0 {
+		return "", nil, fmt.Errorf("%w: satellite update must change at least one field", ErrInvalidInput)
+	}
+
+	if value, present := fields["type"]; present {
+		chairType, ok := value.(*domain.ChairType)
+		if !ok || chairType == nil {
+			return "", nil, fmt.Errorf("%w: chair type cannot be null", ErrInvalidInput)
 		}
 	}
 
-	return nil
+	return kind, fields, nil
 }
