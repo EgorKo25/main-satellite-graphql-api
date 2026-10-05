@@ -24,13 +24,13 @@ func Load(fs afero.Fs, path string) (*App, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	decoder.KnownFields(true)
 
-	var app App
+	app := new(App)
 
-	if err = defaults.Set(&app); err != nil {
+	if err = defaults.Set(app); err != nil {
 		return nil, fmt.Errorf("set configuration defaults: %w", err)
 	}
 
-	if err = decoder.Decode(&app); err != nil {
+	if err = decoder.Decode(app); err != nil {
 		return nil, errors.New("decode configuration: invalid YAML or unknown field")
 	}
 
@@ -38,7 +38,7 @@ func Load(fs afero.Fs, path string) (*App, error) {
 		return nil, fmt.Errorf("validate configuration: %w", err)
 	}
 
-	return &app, nil
+	return app, nil
 }
 
 type App struct {
