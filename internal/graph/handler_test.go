@@ -152,7 +152,9 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 
 			t.Run(test.name+"/"+mode, func(t *testing.T) {
 				t.Parallel()
-				mock := NewMockMainDatabase(gomock.NewController(t))
+				controller := gomock.NewController(t)
+				reader := NewMockMainReader(controller)
+				writer := NewMockMainWriter(controller)
 				query := `mutation { main(input:` + test.literal + `) { deletedId } }`
 
 				var input map[string]any
@@ -162,7 +164,7 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 					input = map[string]any{"input": jsonObject(t, test.variable)}
 				}
 
-				result := requestGraphQL(t, NewHandler(mock), query, input)
+				result := requestGraphQL(t, NewHandler(reader, writer), query, input)
 				require.NotEmpty(t, result.Errors)
 
 				for _, err := range result.Errors {
@@ -175,8 +177,10 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 
 func TestOneOfValidationBeforeAnyMutationAlias(t *testing.T) {
 	t.Parallel()
-	mock := NewMockMainDatabase(gomock.NewController(t))
-	result := requestGraphQL(t, NewHandler(mock), `mutation($bad:MainMutationInput!){
+	controller := gomock.NewController(t)
+	reader := NewMockMainReader(controller)
+	writer := NewMockMainWriter(controller)
+	result := requestGraphQL(t, NewHandler(reader, writer), `mutation($bad:MainMutationInput!){
 		first:main(input:{create:{title:"first",satellite:{tool:{}}}}){main{id}}
 		second:main(input:$bad){deletedId}
 	}`, map[string]any{"bad": map[string]any{"delete": map[string]any{"id": "1"}, "create": nil}})
@@ -198,28 +202,30 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 	tests := []struct {
 		name, typ, input string
 		valid            any
-		expect           func(*MockMainDatabase)
+		expect           func(*MockMainWriter)
 	}{
 		{
 			name: "delete", typ: "MainDeleteInput", input: "{delete:$branch}",
 			valid: map[string]any{"id": "1"},
-			expect: func(mock *MockMainDatabase) {
-				mock.EXPECT().Delete(gomock.Any(), int64(1)).Return(nil)
+			expect: func(writer *MockMainWriter) {
+				writer.EXPECT().Delete(gomock.Any(), int64(1)).Return(nil)
 			},
 		},
 		{
 			name: "create", typ: "ToolCreateInput", input: "{create:{title:\"\",satellite:{tool:$branch}}}",
 			valid: map[string]any{},
-			expect: func(mock *MockMainDatabase) {
-				mock.EXPECT().CreateTool(gomock.Any(), "", postgres.ToolCreate{}).Return(sampleMain(domain.Tools), nil)
+			expect: func(writer *MockMainWriter) {
+				writer.EXPECT().
+					CreateTool(gomock.Any(), "", postgres.ToolCreate{}).
+					Return(sampleMain(domain.Tools), nil)
 			},
 		},
 		{
 			name: "update", typ: "ToolUpdateInput", input: "{update:{id:\"1\",satellite:{tool:$branch}}}",
 			valid: map[string]any{toolDescription: nil},
-			expect: func(mock *MockMainDatabase) {
+			expect: func(writer *MockMainWriter) {
 				patch := postgres.ToolUpdate{Description1: graphql.OmittableOf[*string](nil)}
-				mock.EXPECT().UpdateTool(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
+				writer.EXPECT().UpdateTool(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
 					Return(sampleMain(domain.Tools), nil)
 			},
 		},
@@ -229,7 +235,9 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 			for _, state := range []string{"missing", nullBranch, valueBranch} {
 				t.Run(fmt.Sprintf("%s/required=%t/%s", test.name, required, state), func(t *testing.T) {
 					t.Parallel()
-					mock := NewMockMainDatabase(gomock.NewController(t))
+					controller := gomock.NewController(t)
+					reader := NewMockMainReader(controller)
+					writer := NewMockMainWriter(controller)
 
 					typ := test.typ
 					if required {
@@ -247,12 +255,12 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 
 					wantError := !required || state != valueBranch
 					if !wantError {
-						test.expect(mock)
+						test.expect(writer)
 					}
 
 					result := requestGraphQL(
 						t,
-						NewHandler(mock),
+						NewHandler(reader, writer),
 						"mutation($branch:"+typ+"){main(input:"+test.input+"){deletedId}}",
 						variables,
 					)
@@ -276,29 +284,29 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 
 	branches := []struct {
 		name, field string
-		expect      func(*MockMainDatabase, graphql.Omittable[*string])
+		expect      func(*MockMainWriter, graphql.Omittable[*string])
 	}{
 		{
 			name:  toolBranch,
 			field: toolDescription,
-			expect: func(mock *MockMainDatabase, value graphql.Omittable[*string]) {
-				mock.EXPECT().UpdateTool(gomock.Any(), int64(1), graphql.Omittable[*string]{},
+			expect: func(writer *MockMainWriter, value graphql.Omittable[*string]) {
+				writer.EXPECT().UpdateTool(gomock.Any(), int64(1), graphql.Omittable[*string]{},
 					postgres.ToolUpdate{Description1: value}).Return(sampleMain(domain.Tools), nil)
 			},
 		},
 		{
 			name:  tableBranch,
 			field: "description2",
-			expect: func(mock *MockMainDatabase, value graphql.Omittable[*string]) {
-				mock.EXPECT().UpdateTable(gomock.Any(), int64(1), graphql.Omittable[*string]{},
+			expect: func(writer *MockMainWriter, value graphql.Omittable[*string]) {
+				writer.EXPECT().UpdateTable(gomock.Any(), int64(1), graphql.Omittable[*string]{},
 					postgres.TableUpdate{Description2: value}).Return(sampleMain(domain.Tables), nil)
 			},
 		},
 		{
 			name:  chairBranch,
 			field: "description3",
-			expect: func(mock *MockMainDatabase, value graphql.Omittable[*string]) {
-				mock.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{},
+			expect: func(writer *MockMainWriter, value graphql.Omittable[*string]) {
+				writer.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{},
 					postgres.ChairUpdate{Description3: value}).Return(sampleMain(domain.Chairs), nil)
 			},
 		},
@@ -316,9 +324,11 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 		for _, value := range values {
 			t.Run(branch.name+"/"+value.name, func(t *testing.T) {
 				t.Parallel()
-				mock := NewMockMainDatabase(gomock.NewController(t))
-				branch.expect(mock, graphql.OmittableOf(value.value))
-				result := requestGraphQL(t, NewHandler(mock),
+				controller := gomock.NewController(t)
+				reader := NewMockMainReader(controller)
+				writer := NewMockMainWriter(controller)
+				branch.expect(writer, graphql.OmittableOf(value.value))
+				result := requestGraphQL(t, NewHandler(reader, writer),
 					"mutation($input:MainMutationInput!){main(input:$input){main{id}}}",
 					map[string]any{"input": map[string]any{"update": map[string]any{
 						"id": "1", "satellite": map[string]any{
@@ -338,10 +348,12 @@ func TestTitleOnlyBinding(t *testing.T) {
 	for _, title := range []string{"new", ""} {
 		t.Run(title, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
-			mock.EXPECT().UpdateMain(gomock.Any(), int64(1), graphql.OmittableOf(&title)).
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+			writer.EXPECT().UpdateMain(gomock.Any(), int64(1), graphql.OmittableOf(&title)).
 				Return(sampleMain(domain.Tools), nil)
-			result := requestGraphQL(t, NewHandler(mock),
+			result := requestGraphQL(t, NewHandler(reader, writer),
 				"mutation($title:String){main(input:{update:{id:1,title:$title}}){main{id}}}",
 				map[string]any{"title": title})
 			require.Empty(t, result.Errors)
@@ -366,14 +378,16 @@ func TestPatchVariablePresence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
 			patch := postgres.ChairUpdate{
 				Description3: test.description,
 				Type:         graphql.OmittableOf(new(domain.CDE)),
 			}
-			mock.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
+			writer.EXPECT().UpdateChair(gomock.Any(), int64(1), graphql.Omittable[*string]{}, patch).
 				Return(sampleMain(domain.Chairs), nil)
-			result := requestGraphQL(t, NewHandler(mock),
+			result := requestGraphQL(t, NewHandler(reader, writer),
 				`mutation($description:String){
 				main(input:{update:{id:1,satellite:{chair:{type:cde,description3:$description}}}}){main{id}}
 			}`,
@@ -459,8 +473,10 @@ func TestGraphQLValidationRejectsBeforeService(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
-			result := requestGraphQL(t, NewHandler(mock), test.query, test.variables)
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+			result := requestGraphQL(t, NewHandler(reader, writer), test.query, test.variables)
 			require.NotEmpty(t, result.Errors)
 
 			for _, err := range result.Errors {
@@ -485,9 +501,16 @@ func TestDatabaseErrorsArePresented(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
-			mock.EXPECT().Delete(gomock.Any(), int64(1)).Return(fmt.Errorf("operation context: %w", test.err))
-			result := requestGraphQL(t, NewHandler(mock), `mutation{main(input:{delete:{id:"1"}}){deletedId}}`, nil)
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+			writer.EXPECT().Delete(gomock.Any(), int64(1)).Return(fmt.Errorf("operation context: %w", test.err))
+			result := requestGraphQL(
+				t,
+				NewHandler(reader, writer),
+				`mutation{main(input:{delete:{id:"1"}}){deletedId}}`,
+				nil,
+			)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, test.code, result.Errors[0].Extensions["code"])
 			require.JSONEq(t, "null", string(result.Data["main"]))
@@ -545,8 +568,10 @@ func TestInvalidIDFormats(t *testing.T) {
 			for _, test := range tests {
 				t.Run(operation.name+"/"+identifier.name+"/"+test.name, func(t *testing.T) {
 					t.Parallel()
-					mock := NewMockMainDatabase(gomock.NewController(t))
-					result := requestGraphQL(t, NewHandler(mock), test.query, test.variables)
+					controller := gomock.NewController(t)
+					reader := NewMockMainReader(controller)
+					writer := NewMockMainWriter(controller)
+					result := requestGraphQL(t, NewHandler(reader, writer), test.query, test.variables)
 					require.Len(t, result.Errors, 1)
 					require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
 				})
@@ -588,12 +613,15 @@ func TestListInputMapping(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
-			mock.EXPECT().List(gomock.Any(), test.want).Return([]*domain.Main{}, nil)
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+
+			reader.EXPECT().List(gomock.Any(), test.want).Return([]*domain.Main{}, nil)
 
 			result := requestGraphQL(
 				t,
-				NewHandler(mock),
+				NewHandler(reader, writer),
 				`query($id:ID,$limit:Int! = 20,$offset:Int! = 0){main(id:$id,limit:$limit,offset:$offset){id}}`,
 				test.variables,
 			)
@@ -624,7 +652,9 @@ func TestInputsRejectedBeforeOpeningDatabase(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			result := requestGraphQL(t, NewHandler(&postgres.DB{}), test.query, nil)
+
+			database := &postgres.DB{}
+			result := requestGraphQL(t, NewHandler(database, database), test.query, nil)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, badUserInput, result.Errors[0].Extensions["code"])
 		})
@@ -633,10 +663,13 @@ func TestInputsRejectedBeforeOpeningDatabase(t *testing.T) {
 
 func TestSchemaHasOnlyRequiredBusinessRoots(t *testing.T) {
 	t.Parallel()
+	controller := gomock.NewController(t)
+	reader := NewMockMainReader(controller)
+	writer := NewMockMainWriter(controller)
 
 	result := requestGraphQL(
 		t,
-		NewHandler(NewMockMainDatabase(gomock.NewController(t))),
+		NewHandler(reader, writer),
 		`{__schema{queryType{fields{name}}mutationType{fields{name}}subscriptionType{name}}}`,
 		nil,
 	)
@@ -670,9 +703,13 @@ func TestOneOfSchema(t *testing.T) {
 	for _, name := range []string{"MainMutationInput", "SatelliteCreateInput", "SatelliteUpdateInput"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+
 			result := requestGraphQL(
 				t,
-				NewHandler(NewMockMainDatabase(gomock.NewController(t))),
+				NewHandler(reader, writer),
 				`{__type(name:"`+name+`"){isOneOf inputFields{name defaultValue type{kind}}}}`,
 				nil,
 			)
@@ -706,36 +743,38 @@ func TestCreateInputAndOutput(t *testing.T) {
 
 	tests := []struct {
 		kind, typename, contents, fragment string
-		expect                             func(*MockMainDatabase, *domain.Main)
+		expect                             func(*MockMainWriter, *domain.Main)
 	}{
 		{kind: toolBranch, typename: "Tool", contents: "{}", fragment: toolDescription,
-			expect: func(mock *MockMainDatabase, value *domain.Main) {
-				mock.EXPECT().CreateTool(gomock.Any(), "", postgres.ToolCreate{}).Return(value, nil)
+			expect: func(writer *MockMainWriter, value *domain.Main) {
+				writer.EXPECT().CreateTool(gomock.Any(), "", postgres.ToolCreate{}).Return(value, nil)
 			}},
 		{kind: tableBranch, typename: "Table", contents: "{}", fragment: "description2",
-			expect: func(mock *MockMainDatabase, value *domain.Main) {
-				mock.EXPECT().CreateTable(gomock.Any(), "", postgres.TableCreate{}).Return(value, nil)
+			expect: func(writer *MockMainWriter, value *domain.Main) {
+				writer.EXPECT().CreateTable(gomock.Any(), "", postgres.TableCreate{}).Return(value, nil)
 			}},
 		{kind: chairBranch, typename: "Chair", contents: "{type:abc}", fragment: "description3 type",
-			expect: func(mock *MockMainDatabase, value *domain.Main) {
-				mock.EXPECT().CreateChair(gomock.Any(), "", postgres.ChairCreate{Type: domain.ABC}).Return(value, nil)
+			expect: func(writer *MockMainWriter, value *domain.Main) {
+				writer.EXPECT().CreateChair(gomock.Any(), "", postgres.ChairCreate{Type: domain.ABC}).Return(value, nil)
 			}},
 	}
 	for _, test := range tests {
 		t.Run(test.kind, func(t *testing.T) {
 			t.Parallel()
-			mock := NewMockMainDatabase(gomock.NewController(t))
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
 			kind := map[string]domain.Kind{
 				toolBranch:  domain.Tools,
 				tableBranch: domain.Tables,
 				chairBranch: domain.Chairs,
 			}[test.kind]
 			value := sampleMain(kind)
-			test.expect(mock, value)
+			test.expect(writer, value)
 
 			result := requestGraphQL(
 				t,
-				NewHandler(mock),
+				NewHandler(reader, writer),
 				`mutation {
 					main(input:{create:{title:"",satellite:{`+test.kind+`:`+test.contents+`}}}) {
 						deletedId
@@ -790,8 +829,11 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mock := NewMockMainDatabase(gomock.NewController(t))
-			mock.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return(nil, test.err)
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+
+			reader.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return(nil, test.err)
 
 			path := filepath.Join(t.TempDir(), "graphql.log")
 			cfg := config.Logger{Cores: []config.LoggerCore{{
@@ -806,7 +848,7 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 				require.NoError(t, logger.Initialize(cfg))
 			})
 
-			result := requestGraphQL(t, NewHandler(mock), "{main{id}}", nil)
+			result := requestGraphQL(t, NewHandler(reader, writer), "{main{id}}", nil)
 			require.Len(t, result.Errors, 1)
 			require.Equal(t, "internal server error", result.Errors[0].Message)
 			require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
@@ -820,8 +862,11 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 
 //nolint:paralleltest // Replaces the process-global logger.
 func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
-	mock := NewMockMainDatabase(gomock.NewController(t))
-	mock.EXPECT().
+	controller := gomock.NewController(t)
+	reader := NewMockMainReader(controller)
+	writer := NewMockMainWriter(controller)
+
+	reader.EXPECT().
 		List(gomock.Any(), postgres.ListInput{Limit: 20}).
 		DoAndReturn(func(context.Context, postgres.ListInput) ([]*domain.Main, error) {
 			panic("private panic")
@@ -840,7 +885,7 @@ func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
 		require.NoError(t, logger.Initialize(cfg))
 	})
 
-	result := requestGraphQL(t, NewHandler(mock), "{main{id}}", nil)
+	result := requestGraphQL(t, NewHandler(reader, writer), "{main{id}}", nil)
 	require.Len(t, result.Errors, 1)
 	require.Equal(t, "internal server error", result.Errors[0].Message)
 	require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
@@ -852,7 +897,9 @@ func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
 
 func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {
 	t.Parallel()
-	mock := NewMockMainDatabase(gomock.NewController(t))
+	controller := gomock.NewController(t)
+	reader := NewMockMainReader(controller)
+	writer := NewMockMainWriter(controller)
 
 	var query strings.Builder
 	query.WriteString("{")
@@ -862,7 +909,7 @@ func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {
 	}
 
 	query.WriteString("}")
-	result := requestGraphQL(t, NewHandler(mock), query.String(), nil)
+	result := requestGraphQL(t, NewHandler(reader, writer), query.String(), nil)
 	require.NotEmpty(t, result.Errors)
 
 	for _, err := range result.Errors {
@@ -872,10 +919,13 @@ func TestListComplexityIncludesPageSizeAndAliases(t *testing.T) {
 
 func TestMaximumPageAllowsCompleteSelection(t *testing.T) {
 	t.Parallel()
-	mock := NewMockMainDatabase(gomock.NewController(t))
-	mock.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 100}).Return([]*domain.Main{}, nil)
+	controller := gomock.NewController(t)
+	reader := NewMockMainReader(controller)
+	writer := NewMockMainWriter(controller)
 
-	result := requestGraphQL(t, NewHandler(mock), `{
+	reader.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 100}).Return([]*domain.Main{}, nil)
+
+	result := requestGraphQL(t, NewHandler(reader, writer), `{
 		main(limit:100) {
 			id title createdAt updatedAt deletedAt
 			satellite {

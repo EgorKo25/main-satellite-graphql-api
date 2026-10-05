@@ -72,7 +72,8 @@ func TestListQueryCount(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 
 			recorder := httptest.NewRecorder()
-			handler := graph.NewHandler(postgres.NewReadDBForTest(pool))
+			reader := postgres.NewReadDBForTest(pool)
+			handler := graph.NewHandler(reader, database)
 
 			trace.queries.Store(0)
 			handler.ServeHTTP(recorder, request)

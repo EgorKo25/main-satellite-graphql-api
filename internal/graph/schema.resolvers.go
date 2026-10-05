@@ -10,9 +10,13 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 )
 
-func (r *Resolver) Mutation() generated.MutationResolver { return &mutationResolver{r} }
+func (r *Resolver) Mutation() generated.MutationResolver {
+	return &mutationResolver{database: r.writer}
+}
 
-type mutationResolver struct{ *Resolver }
+type mutationResolver struct {
+	database mainWriter
+}
 
 func (r *mutationResolver) Main(
 	ctx context.Context,
@@ -46,9 +50,11 @@ func (r *mutationResolver) Main(
 	return &model.MainMutationPayload{Main: main}, nil
 }
 
-func (r *Resolver) Query() generated.QueryResolver { return &queryResolver{r} }
+func (r *Resolver) Query() generated.QueryResolver { return &queryResolver{database: r.reader} }
 
-type queryResolver struct{ *Resolver }
+type queryResolver struct {
+	database mainReader
+}
 
 func (r *queryResolver) Main(ctx context.Context, id *int64, limit int32, offset int32) ([]*domain.Main, error) {
 	items, err := r.database.List(ctx, postgres.ListInput{ID: id, Limit: int(limit), Offset: int(offset)})

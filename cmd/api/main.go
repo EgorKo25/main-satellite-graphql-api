@@ -41,7 +41,7 @@ func main() {
 	}
 
 	httpConfig := cfg.HTTP
-	handler := graph.NewHandler(database)
+	handler := graph.NewHandler(database, database)
 	mux := http.NewServeMux()
 	mux.Handle("/graphql", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requestCtx, cancel := context.WithTimeout(request.Context(), httpConfig.RequestTimeout)
