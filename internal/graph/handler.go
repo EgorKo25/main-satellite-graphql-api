@@ -23,9 +23,9 @@ const (
 	internalServerError = "INTERNAL_SERVER_ERROR"
 )
 
-func NewHandler(database mainDatabase) http.Handler {
+func NewHandler(reader mainReader, writer mainWriter) http.Handler {
 	log := logger.Get("graphql")
-	configuration := generated.Config{Resolvers: &Resolver{database: database}}
+	configuration := generated.Config{Resolvers: &Resolver{reader: reader, writer: writer}}
 	configuration.Complexity.Query.Main = func(childComplexity int, _ *int64, limit, _ int32) int {
 		if limit < 1 || limit > 100 {
 			return 1 + childComplexity

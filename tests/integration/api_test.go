@@ -200,7 +200,7 @@ func setup(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(applicationDB.Close)
 
-	server := httptest.NewServer(graph.NewHandler(applicationDB))
+	server := httptest.NewServer(graph.NewHandler(applicationDB, applicationDB))
 	server.Client().Timeout = 30 * time.Second
 	t.Cleanup(server.Close)
 
