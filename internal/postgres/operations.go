@@ -33,7 +33,11 @@ func (db *DB) Create(ctx context.Context, title string, satellite map[string]any
 	if err != nil {
 		return nil, fmt.Errorf("begin create: %w", err)
 	}
-	defer db.rollback(ctx, transaction)
+	defer func() {
+		if err := transaction.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			logger.Get("postgres").Error("rollback failed", err)
+		}
+	}()
 
 	now := time.Now().UTC()
 
@@ -68,8 +72,17 @@ func (db *DB) Create(ctx context.Context, title string, satellite map[string]any
 		return nil, fmt.Errorf("insert satellite: %w", err)
 	}
 
-	if main.Satellite, err = collectSatellite(rows, kind); err != nil {
-		return nil, err
+	switch kind {
+	case domain.Tools:
+		main.Satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Tool])
+	case domain.Tables:
+		main.Satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Table])
+	case domain.Chairs:
+		main.Satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Chair])
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("read inserted %s: %w", kind, err)
 	}
 
 	if err = transaction.Commit(ctx); err != nil {
@@ -94,7 +107,11 @@ func (db *DB) Update(
 	if err != nil {
 		return nil, fmt.Errorf("begin update: %w", err)
 	}
-	defer db.rollback(ctx, transaction)
+	defer func() {
+		if err := transaction.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			logger.Get("postgres").Error("rollback failed", err)
+		}
+	}()
 
 	result, err := db.applyUpdate(ctx, transaction, mainID, title, kind, fields)
 	if err != nil {
@@ -158,7 +175,11 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 	if err != nil {
 		return fmt.Errorf("begin delete: %w", err)
 	}
-	defer db.rollback(ctx, transaction)
+	defer func() {
+		if err := transaction.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			logger.Get("postgres").Error("rollback failed", err)
+		}
+	}()
 
 	main, err := db.lockMain(ctx, transaction, mainID)
 	if err != nil {
@@ -242,7 +263,22 @@ func (db *DB) updateSatellite(
 		return nil, fmt.Errorf("query updated satellite: %w", err)
 	}
 
-	return collectSatellite(rows, main.SubObj)
+	var satellite domain.SubObject
+
+	switch main.SubObj {
+	case domain.Tools:
+		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Tool])
+	case domain.Tables:
+		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Table])
+	case domain.Chairs:
+		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Chair])
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("read updated %s: %w", main.SubObj, err)
+	}
+
+	return satellite, nil
 }
 
 func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
@@ -282,39 +318,4 @@ func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*
 	}
 
 	return &main, nil
-}
-
-func collectSatellite(rows pgx.Rows, kind domain.Kind) (domain.SubObject, error) {
-	var (
-		satellite domain.SubObject
-		err       error
-	)
-
-	switch kind {
-	case domain.Tools:
-		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Tool])
-	case domain.Tables:
-		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Table])
-	case domain.Chairs:
-		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Chair])
-	default:
-		rows.Close()
-
-		return nil, fmt.Errorf("read satellite: unknown kind %q", kind)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("read %s satellite: %w", kind, err)
-	}
-
-	return satellite, nil
-}
-
-func (db *DB) rollback(ctx context.Context, transaction pgx.Tx) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-
-	if err := transaction.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		logger.Get("postgres").Error("rollback failed", err)
-	}
 }
