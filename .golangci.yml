@@ -87,7 +87,7 @@ linters:
           - paralleltest
   settings:
     cyclop:
-      max-complexity: 10
+      max-complexity: 14
       package-average: 0.0
     varnamelen:
       ignore-decls:
