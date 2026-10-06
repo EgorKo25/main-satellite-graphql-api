@@ -485,7 +485,8 @@ flowchart LR
 ### Структура проекта
 
 ```text
-cmd/api/                  запуск HTTP-сервера и graceful shutdown
+cmd/api/                  сборка зависимостей, сигналы и закрытие ресурсов
+internal/server/          HTTP-сервер, маршруты, таймауты и graceful shutdown
 internal/config/          типизированный YAML и проверка настроек
 internal/logger/          общий логгер, именованные логгеры и адаптер zap
 internal/domain/          Main, Satellite, Tool, Table и Chair
@@ -498,6 +499,8 @@ migrations/               обычные SQL-файлы goose up/down
 config.example.yaml       пример конфигурации без секретов
 config.compose.yaml       заполненная конфигурация API для Compose
 ```
+
+`main` собирает конфигурацию, логгер, БД, GraphQL-handler и `server.Server`. Конструктор `server.New(cfg.HTTP, handler)` настраивает `/graphql` и HTTP-таймауты; `Server.Serve(ctx)` запускает сервер и выполняет graceful shutdown при отмене контекста. После его завершения `main` закрывает БД и логгер.
 
 `Satellite` содержит общие идентификаторы и timestamps и встроен в `Tool`, `Table`, `Chair`. У `Chair` находятся только его собственные `description3` и `type`. Интерфейс `domain.SubObject` даёт доступ к разновидности и общим данным для смешанного результата чтения.
 
