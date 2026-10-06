@@ -3,116 +3,164 @@
 package integrationtests_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
+	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 )
 
-func TestLoadReturnsIndependentConfigurations(t *testing.T) {
-	t.Parallel()
-
+//nolint:paralleltest // Initializes the process-global logger.
+func TestYAMLConfiguresFileLoggerOutputs(t *testing.T) {
 	const (
-		firstContents = `
+		loggerName = "startup"
+		operation  = "connect"
+		contents   = `
             database:
-              url: postgres://localhost/first
-              user: first_user
-              password: first_password
+              url: postgres://localhost/test
+              user: graphql
+              password: graphql_dev
               connect_timeout: 5s
               max_conns: 10
-              min_conns: 0
-            http:
-              addr: 127.0.0.1:8081
-              request_timeout: 3s
+            logger:
+              cores:
+                - level: info
+                  encoding: json
+                  output: file
+                  path: logs/application.json
+                  time_format: utc
+                - level: error
+                  encoding: json
+                  output: file
+                  path: logs/errors.json
+                  time_format: utc
             `
-		secondContents = `
-            database:
-              url: postgres://localhost/second
-              user: second_user
-              password: second_password
-              connect_timeout: 250ms
-              max_conns: 3
-              min_conns: 3
-            http:
-              read_header_timeout: 2s
-              shutdown_timeout: 20s
-            `
-	)
-
-	var (
-		wantFirst = config.App{
-			Database: config.Database{
-				URL:            "postgres://localhost/first",
-				User:           "first_user",
-				Password:       "first_password",
-				ConnectTimeout: 5 * time.Second,
-				MaxConns:       10,
-				MinConns:       0,
-			},
-			HTTP: config.HTTP{
-				Addr:              "127.0.0.1:8081",
-				RequestTimeout:    3 * time.Second,
-				ReadHeaderTimeout: 5 * time.Second,
-				ReadTimeout:       10 * time.Second,
-				WriteTimeout:      15 * time.Second,
-				IdleTimeout:       time.Minute,
-				ShutdownTimeout:   15 * time.Second,
-			},
-			Logger: config.Logger{Cores: []config.LoggerCore{{
-				Level:      "info",
-				Encoding:   "json",
-				Output:     "stdout",
-				TimeFormat: "utc",
-			}}},
-		}
-		wantSecond = config.App{
-			Database: config.Database{
-				URL:            "postgres://localhost/second",
-				User:           "second_user",
-				Password:       "second_password",
-				ConnectTimeout: 250 * time.Millisecond,
-				MaxConns:       3,
-				MinConns:       3,
-			},
-			HTTP: config.HTTP{
-				Addr:              "0.0.0.0:8080",
-				RequestTimeout:    10 * time.Second,
-				ReadHeaderTimeout: 2 * time.Second,
-				ReadTimeout:       10 * time.Second,
-				WriteTimeout:      15 * time.Second,
-				IdleTimeout:       time.Minute,
-				ShutdownTimeout:   20 * time.Second,
-			},
-			Logger: config.Logger{Cores: []config.LoggerCore{{
-				Level:      "info",
-				Encoding:   "json",
-				Output:     "stdout",
-				TimeFormat: "utc",
-			}}},
-		}
 	)
 
 	filesystem := afero.NewMemMapFs()
-	require.NoError(t, afero.WriteFile(filesystem, "first.yaml", []byte(firstContents), 0o600))
-	require.NoError(t, afero.WriteFile(filesystem, "second.yaml", []byte(secondContents), 0o600))
+	require.NoError(t, afero.WriteFile(filesystem, "config.yaml", []byte(contents), 0o600))
 
-	first, err := config.Load(filesystem, "first.yaml")
+	app, err := config.Load(filesystem, "config.yaml")
 	require.NoError(t, err)
-	require.Empty(t, cmp.Diff(wantFirst, *first))
+	require.NoError(t, logger.Initialize(filesystem, app.Logger))
 
-	second, err := config.Load(filesystem, "second.yaml")
+	log := logger.Get(loggerName).With(logger.String("operation", operation))
+
+	t.Cleanup(func() { require.NoError(t, log.Close()) })
+
+	log.Debug("filtered out")
+	log.Info("starting")
+	log.Error("connection failed", errors.New("database unavailable"))
+	require.NoError(t, log.Close())
+
+	type record struct {
+		Level     string `json:"level"`
+		Name      string `json:"logger"`
+		Message   string `json:"msg"`
+		Operation string `json:"operation"`
+		Error     string `json:"error"`
+	}
+
+	for _, output := range []struct {
+		path string
+		want []record
+	}{
+		{
+			path: "logs/application.json",
+			want: []record{
+				{Level: "info", Name: loggerName, Message: "starting", Operation: operation},
+				{
+					Level: "error", Name: loggerName, Message: "connection failed",
+					Operation: operation, Error: "database unavailable",
+				},
+			},
+		},
+		{
+			path: "logs/errors.json",
+			want: []record{{
+				Level: "error", Name: loggerName, Message: "connection failed",
+				Operation: operation, Error: "database unavailable",
+			}},
+		},
+	} {
+		written, readErr := afero.ReadFile(filesystem, output.path)
+		require.NoError(t, readErr)
+
+		lines := bytes.Split(bytes.TrimSpace(written), []byte("\n"))
+		got := make([]record, len(lines))
+
+		for index, line := range lines {
+			require.NoError(t, json.Unmarshal(line, &got[index]))
+		}
+
+		require.Empty(t, cmp.Diff(output.want, got), output.path)
+	}
+}
+
+//nolint:paralleltest // Initializes the process-global logger.
+func TestReadOnlyFilesystemRejectsLoggerInitialization(t *testing.T) {
+	const contents = `
+            database:
+              url: postgres://localhost/test
+              user: graphql
+              password: graphql_dev
+              connect_timeout: 5s
+              max_conns: 10
+            logger:
+              cores:
+                - level: info
+                  encoding: json
+                  output: file
+                  path: logs/retained.json
+                  time_format: utc
+            `
+
+	filesystem := afero.NewMemMapFs()
+	require.NoError(t, afero.WriteFile(filesystem, "config.yaml", []byte(contents), 0o600))
+
+	app, err := config.Load(filesystem, "config.yaml")
 	require.NoError(t, err)
-	require.NotSame(t, first, second)
-	require.Empty(t, cmp.Diff(wantSecond, *second))
-	require.Empty(t, cmp.Diff(wantFirst, *first))
+	require.NoError(t, logger.Initialize(filesystem, app.Logger))
 
-	second.MaxConns = 1
-	second.Addr = "localhost:9000"
-	second.Cores[0].Level = "fatal"
+	active := logger.Get("startup")
 
-	require.Empty(t, cmp.Diff(wantFirst, *first))
+	t.Cleanup(func() { require.NoError(t, active.Close()) })
+
+	active.Info("before failed initialization")
+
+	readOnly := afero.NewReadOnlyFs(filesystem)
+	app, err = config.Load(readOnly, "config.yaml")
+	require.NoError(t, err)
+
+	err = logger.Initialize(readOnly, app.Logger)
+	require.ErrorIs(t, err, fs.ErrPermission)
+	require.ErrorContains(t, err, "create logger directory:")
+
+	logger.Get("startup").Info("after failed initialization")
+	require.NoError(t, active.Close())
+
+	written, err := afero.ReadFile(filesystem, "logs/retained.json")
+	require.NoError(t, err)
+
+	lines := bytes.Split(bytes.TrimSpace(written), []byte("\n"))
+	messages := make([]string, len(lines))
+
+	for index, line := range lines {
+		var record struct {
+			Message string `json:"msg"`
+		}
+
+		require.NoError(t, json.Unmarshal(line, &record))
+
+		messages[index] = record.Message
+	}
+
+	require.Equal(t, []string{"before failed initialization", "after failed initialization"}, messages)
 }
