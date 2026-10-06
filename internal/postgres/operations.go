@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const deletedAtColumn = "deleted_at"
+
 var satelliteKinds = map[string]domain.Kind{
 	"tool":  domain.Tools,
 	"table": domain.Tables,
@@ -32,14 +34,20 @@ func (db *DB) Create(ctx context.Context, title string, satellite map[string]any
 	}
 	defer db.rollback(ctx, transaction)
 
-	main := &domain.Main{Title: title, SubObj: kind, CreatedAt: time.Now().UTC()}
-	main.UpdatedAt = main.CreatedAt
+	now := time.Now().UTC()
 
-	if err = transaction.QueryRow(ctx, `
+	rows, err := transaction.Query(ctx, `
 	    INSERT INTO main (title, sub_id, sub_obj, created_at, update_at)
-	    VALUES ($1, nextval(pg_get_serial_sequence($2, 'id')), $2, $3, $3) RETURNING id, sub_id;
-	`, main.Title, string(kind), main.CreatedAt).Scan(&main.ID, &main.SubID); err != nil {
+	    VALUES ($1, nextval(pg_get_serial_sequence($2, 'id')), $2, $3, $3)
+	    RETURNING id, title, sub_id, sub_obj, created_at, update_at, deleted_at;
+	`, title, string(kind), now)
+	if err != nil {
 		return nil, fmt.Errorf("insert Main: %w", err)
+	}
+
+	main, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Main])
+	if err != nil {
+		return nil, fmt.Errorf("read inserted Main: %w", err)
 	}
 
 	columns := maps.Clone(fields)
@@ -49,22 +57,17 @@ func (db *DB) Create(ctx context.Context, title string, satellite map[string]any
 	columns["update_at"] = main.CreatedAt
 
 	query, args, err := squirrel.Insert(string(kind)).SetMap(columns).
-		PlaceholderFormat(squirrel.Dollar).Suffix(";").ToSql()
+		PlaceholderFormat(squirrel.Dollar).Suffix("RETURNING *;").ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("build satellite insert: %w", err)
 	}
 
-	tag, err := transaction.Exec(ctx, query, args...)
+	rows, err = transaction.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("insert satellite: %w", err)
 	}
 
-	if tag.RowsAffected() != 1 {
-		return nil, fmt.Errorf("insert satellite: expected one changed row, got %d", tag.RowsAffected())
-	}
-
-	result, err := db.readTx(ctx, transaction, main.ID)
-	if err != nil {
+	if main.Satellite, err = collectSatellite(rows, kind); err != nil {
 		return nil, err
 	}
 
@@ -72,7 +75,7 @@ func (db *DB) Create(ctx context.Context, title string, satellite map[string]any
 		return nil, fmt.Errorf("commit create: %w", err)
 	}
 
-	return result, nil
+	return main, nil
 }
 
 func (db *DB) Update(
@@ -127,26 +130,26 @@ func (db *DB) applyUpdate(
 
 	now := time.Now().UTC()
 
-	tag, err := transaction.Exec(ctx, `
+	rows, err := transaction.Query(ctx, `
 	    UPDATE main
 	    SET title = CASE WHEN $2::boolean THEN $3::text ELSE title END, update_at = $4
-	    WHERE id = $1 AND deleted_at IS NULL;
+	    WHERE id = $1 AND deleted_at IS NULL
+	    RETURNING id, title, sub_id, sub_obj, created_at, update_at, deleted_at;
 	`, main.ID, title.IsSet(), title.Value(), now)
 	if err != nil {
 		return nil, fmt.Errorf("update Main: %w", err)
 	}
 
-	if tag.RowsAffected() != 1 {
-		return nil, fmt.Errorf("update Main: expected one changed row, got %d", tag.RowsAffected())
+	main, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Main])
+	if err != nil {
+		return nil, fmt.Errorf("read updated Main: %w", err)
 	}
 
-	if fields != nil {
-		if err = db.updateSatellite(ctx, transaction, main, fields, now); err != nil {
-			return nil, err
-		}
+	if main.Satellite, err = db.updateSatellite(ctx, transaction, main, fields, now); err != nil {
+		return nil, err
 	}
 
-	return db.readTx(ctx, transaction, main.ID)
+	return main, nil
 }
 
 func (db *DB) Delete(ctx context.Context, mainID int64) error {
@@ -179,12 +182,21 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 		return fmt.Errorf("delete Main: expected one changed row, got %d", tag.RowsAffected())
 	}
 
-	if err = db.updateSatellite(ctx, transaction, main, map[string]any{"deleted_at": now}, now); err != nil {
+	query, args, err := squirrel.Update(string(main.SubObj)).
+		SetMap(map[string]any{deletedAtColumn: now, "update_at": now}).
+		Where(squirrel.Eq{"id": main.SubID, "main_id": main.ID, deletedAtColumn: nil}).
+		PlaceholderFormat(squirrel.Dollar).Suffix(";").ToSql()
+	if err != nil {
+		return fmt.Errorf("build satellite delete: %w", err)
+	}
+
+	tag, err = transaction.Exec(ctx, query, args...)
+	if err != nil {
 		return fmt.Errorf("delete satellite: %w", err)
 	}
 
-	if _, err = db.readTx(ctx, transaction, main.ID); err != nil {
-		return err
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("delete satellite: expected one changed row, got %d", tag.RowsAffected())
 	}
 
 	if err = transaction.Commit(ctx); err != nil {
@@ -200,41 +212,103 @@ func (db *DB) updateSatellite(
 	main *domain.Main,
 	fields map[string]any,
 	now time.Time,
-) error {
-	var table string
+) (domain.SubObject, error) {
+	var (
+		query string
+		args  []any
+		err   error
+	)
+
+	condition := squirrel.Eq{"id": main.SubID, "main_id": main.ID, deletedAtColumn: nil}
+
+	if fields == nil {
+		query, args, err = squirrel.Select("*").From(string(main.SubObj)).Where(condition).
+			PlaceholderFormat(squirrel.Dollar).Suffix(";").ToSql()
+	} else {
+		columns := maps.Clone(fields)
+		columns["update_at"] = now
+
+		query, args, err = squirrel.Update(string(main.SubObj)).SetMap(columns).Where(condition).
+			PlaceholderFormat(squirrel.Dollar).Suffix("RETURNING *;").ToSql()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("build satellite update: %w", err)
+	}
+
+	rows, err := transaction.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query updated satellite: %w", err)
+	}
+
+	return collectSatellite(rows, main.SubObj)
+}
+
+func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
+	var (
+		main           domain.Main
+		satelliteCount int
+	)
+
+	err := transaction.QueryRow(ctx, `
+	    WITH locked AS (
+	        SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
+	        FROM main WHERE id = $1 FOR UPDATE
+	    )
+	    SELECT locked.*,
+	        (EXISTS (SELECT 1 FROM tools WHERE main_id = locked.id))::integer +
+	        (EXISTS (SELECT 1 FROM tables WHERE main_id = locked.id))::integer +
+	        (EXISTS (SELECT 1 FROM chairs WHERE main_id = locked.id))::integer
+	    FROM locked;
+	`, mainID).Scan(
+		&main.ID, &main.Title, &main.SubID, &main.SubObj, &main.CreatedAt, &main.UpdatedAt, &main.DeletedAt,
+		&satelliteCount,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("lock main %d: %w", mainID, err)
+	}
+
+	if satelliteCount != 1 {
+		return nil, fmt.Errorf("main %d must have exactly one satellite, got %d", mainID, satelliteCount)
+	}
 
 	for _, kind := range satelliteKinds {
 		if main.SubObj == kind {
-			table = string(kind)
-
-			break
+			return &main, nil
 		}
 	}
 
-	if table == "" {
-		return fmt.Errorf("update satellite: unknown satellite kind %q", main.SubObj)
+	return nil, fmt.Errorf("main %d has invalid sub_obj %q", mainID, main.SubObj)
+}
+
+func collectSatellite(rows pgx.Rows, kind domain.Kind) (domain.SubObject, error) {
+	var (
+		satellite domain.SubObject
+		err       error
+	)
+
+	switch kind {
+	case domain.Tools:
+		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Tool])
+	case domain.Tables:
+		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Table])
+	case domain.Chairs:
+		satellite, err = pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[domain.Chair])
+	default:
+		rows.Close()
+
+		return nil, fmt.Errorf("read satellite: unknown kind %q", kind)
 	}
 
-	columns := maps.Clone(fields)
-	columns["update_at"] = now
-
-	query, args, err := squirrel.Update(table).SetMap(columns).
-		Where(squirrel.Eq{"id": main.SubID, "main_id": main.ID, "deleted_at": nil}).
-		PlaceholderFormat(squirrel.Dollar).Suffix(";").ToSql()
 	if err != nil {
-		return fmt.Errorf("build satellite update: %w", err)
+		return nil, fmt.Errorf("read %s satellite: %w", kind, err)
 	}
 
-	tag, err := transaction.Exec(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("update satellite: %w", err)
-	}
-
-	if tag.RowsAffected() != 1 {
-		return fmt.Errorf("update satellite: expected one changed row, got %d", tag.RowsAffected())
-	}
-
-	return nil
+	return satellite, nil
 }
 
 func (db *DB) rollback(ctx context.Context, transaction pgx.Tx) {

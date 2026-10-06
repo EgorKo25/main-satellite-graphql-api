@@ -953,21 +953,123 @@ func TestGraphQLSchema(t *testing.T) {
 	}
 }
 
-func TestBrokenRelationshipsFailRead(t *testing.T) {
+func TestBrokenRelationshipsFailReadAndWrite(t *testing.T) {
 	for _, testCase := range []struct{ name, sql string }{
 		{"incorrect_sub_id", "UPDATE main SET sub_id=sub_id+1000 WHERE id=$1"},
+		{"missing_satellite", "DELETE FROM tools WHERE main_id=$1"},
+		{"incorrect_backlink", `
+			WITH other_main AS (
+			    INSERT INTO main (title, sub_id, sub_obj)
+			    SELECT 'other Main', sub_id, sub_obj FROM main WHERE id=$1
+			    RETURNING id
+			)
+			UPDATE tools SET main_id=(SELECT id FROM other_main) WHERE main_id=$1;
+		`},
 		{"deleted_satellite", "UPDATE tools SET deleted_at=clock_timestamp() WHERE main_id=$1"},
 		{"extra_satellite", "INSERT INTO tables(main_id,description2) VALUES($1,'foreign satellite')"},
+		{"extra_deleted_satellite", "INSERT INTO tables(main_id,deleted_at) VALUES($1,clock_timestamp())"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			testFixture := setup(t)
-			main := testFixture.create(t, toolBranch, "broken", object{})
-			testFixture.exec(t, testCase.sql, idOf(t, main))
-			before := testFixture.snapshot(t)
-			result := testFixture.gql(t, read, object{"id": idOf(t, main)})
-			require.NotEmpty(t, result.Errors)
-			require.Equal(t, "INTERNAL_SERVER_ERROR", result.Errors[0].Extensions["code"])
-			require.JSONEq(t, before, testFixture.snapshot(t))
+			for _, operation := range []struct{ name, query string }{
+				{"read", read},
+				{"update_title", `mutation($id:ID!) {
+ main(input:{update:{id:$id,title:"must rollback"}}){main{id} deletedId}
+}`},
+				{"update_satellite", `mutation($id:ID!) {
+ main(input:{update:{id:$id,title:"must rollback",satellite:{tool:{description1:"changed"}}}}){main{id} deletedId}
+}`},
+				{deleteOperation, `mutation($id:ID!) { main(input:{delete:{id:$id}}){main{id} deletedId} }`},
+			} {
+				t.Run(operation.name, func(t *testing.T) {
+					testFixture := setup(t)
+					main := testFixture.create(t, toolBranch, "broken", object{})
+					testFixture.exec(t, testCase.sql, idOf(t, main))
+					before := testFixture.snapshot(t)
+					result := testFixture.gql(t, operation.query, object{"id": idOf(t, main)})
+					require.Len(t, result.Errors, 1)
+					require.Equal(t, "INTERNAL_SERVER_ERROR", result.Errors[0].Extensions["code"])
+					require.Nil(t, result.Data[mainField])
+					require.JSONEq(t, before, testFixture.snapshot(t))
+				})
+			}
+		})
+	}
+}
+
+func TestMutationsReturnStoredValues(t *testing.T) {
+	const inputDescription = "input description"
+
+	for _, testCase := range []struct {
+		kind, table, description string
+		input                    object
+	}{
+		{toolBranch, toolsTable, toolDescriptionField, object{toolDescriptionField: inputDescription}},
+		{tableBranch, tablesTable, tableDescriptionField, object{tableDescriptionField: inputDescription}},
+		{
+			chairBranch,
+			chairsTable,
+			chairDescriptionField,
+			object{chairDescriptionField: inputDescription, typeField: chairABC},
+		},
+	} {
+		t.Run(testCase.kind, func(t *testing.T) {
+			for _, operation := range []string{createOperation, updateOperation} {
+				t.Run(operation, func(t *testing.T) {
+					testFixture := setup(t)
+
+					input := object{
+						titleField:     "input title",
+						satelliteField: object{testCase.kind: testCase.input},
+					}
+					if operation == updateOperation {
+						main := testFixture.create(t, testCase.kind, originalDescription, testCase.input)
+						input["id"] = idOf(t, main)
+					}
+
+					testFixture.exec(t, `
+						CREATE FUNCTION test_return_title() RETURNS trigger LANGUAGE plpgsql AS $$
+						BEGIN
+						    NEW.title := 'database title';
+						    RETURN NEW;
+						END;
+						$$;
+					`)
+					testFixture.exec(t, `
+						CREATE TRIGGER test_return_title BEFORE INSERT OR UPDATE ON main
+						FOR EACH ROW EXECUTE FUNCTION test_return_title();
+					`)
+					testFixture.exec(t, fmt.Sprintf(`
+						CREATE FUNCTION test_return_description() RETURNS trigger LANGUAGE plpgsql AS $$
+						BEGIN
+						    NEW.%s := 'database description';
+						    RETURN NEW;
+						END;
+						$$;
+					`, pgx.Identifier{testCase.description}.Sanitize()))
+					testFixture.exec(t, fmt.Sprintf(`
+						CREATE TRIGGER test_return_description BEFORE INSERT OR UPDATE ON %s
+						FOR EACH ROW EXECUTE FUNCTION test_return_description();
+					`, pgx.Identifier{testCase.table}.Sanitize()))
+
+					result := testFixture.gql(t, mutate, object{inputArgument: object{operation: input}})
+					main := updated(t, result)
+
+					var storedTitle, storedDescription string
+
+					err := testFixture.pool.QueryRow(t.Context(), fmt.Sprintf(`
+						SELECT m.title, s.%s
+						FROM main m JOIN %s s ON s.main_id=m.id
+						WHERE m.id=$1;
+					`, pgx.Identifier{testCase.description}.Sanitize(), pgx.Identifier{testCase.table}.Sanitize()),
+						idOf(t, main)).Scan(&storedTitle, &storedDescription)
+					require.NoError(t, err)
+					require.Equal(t, "database title", storedTitle)
+					require.Equal(t, "database description", storedDescription)
+					require.Equal(t, storedTitle, main[titleField])
+					require.Equal(t, storedDescription, satellite(t, main)[testCase.description])
+					require.Equal(t, []any{main}, testFixture.list(t, object{"id": idOf(t, main)}))
+				})
+			}
 		})
 	}
 }

@@ -22,9 +22,9 @@ type Main struct {
 	Title     string
 	SubID     int64
 	SubObj    Kind
-	Satellite SubObject
+	Satellite SubObject `db:"-"`
 	CreatedAt time.Time
-	UpdatedAt time.Time
+	UpdatedAt time.Time `db:"update_at"`
 	DeletedAt *time.Time
 }
 
@@ -36,7 +36,7 @@ type Satellite struct {
 	ID        int64
 	MainID    int64
 	CreatedAt time.Time
-	UpdatedAt time.Time
+	UpdatedAt time.Time `db:"update_at"`
 	DeletedAt *time.Time
 }
 
