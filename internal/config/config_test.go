@@ -1,11 +1,14 @@
 package config_test
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
@@ -16,6 +19,11 @@ import (
 func TestLoadFromYAML(t *testing.T) {
 	t.Parallel()
 
+	const (
+		databaseUser     = "graphql"
+		databasePassword = "graphql_dev"
+	)
+
 	tests := []struct {
 		name     string
 		contents string
@@ -25,17 +33,17 @@ func TestLoadFromYAML(t *testing.T) {
 			name: "zero minimum connections",
 			contents: `
             database:
-              url: postgres://localhost/first
-              user: first_user
-              password: first_password
+              url: postgres://localhost/graphql
+              user: graphql
+              password: graphql_dev
               connect_timeout: 5s
               max_conns: 10
               min_conns: 0
             `,
 			want: config.Database{
-				URL:            "postgres://localhost/first",
-				User:           "first_user",
-				Password:       "first_password",
+				URL:            "postgres://localhost/graphql",
+				User:           databaseUser,
+				Password:       databasePassword,
 				ConnectTimeout: 5 * time.Second,
 				MaxConns:       10,
 				MinConns:       0,
@@ -45,17 +53,17 @@ func TestLoadFromYAML(t *testing.T) {
 			name: "equal connection limits",
 			contents: `
             database:
-              url: postgres://localhost/second
-              user: second_user
-              password: second_password
+              url: postgres://localhost/graphql
+              user: graphql
+              password: graphql_dev
               connect_timeout: 250ms
               max_conns: 3
               min_conns: 3
             `,
 			want: config.Database{
-				URL:            "postgres://localhost/second",
-				User:           "second_user",
-				Password:       "second_password",
+				URL:            "postgres://localhost/graphql",
+				User:           databaseUser,
+				Password:       databasePassword,
 				ConnectTimeout: 250 * time.Millisecond,
 				MaxConns:       3,
 				MinConns:       3,
@@ -108,12 +116,35 @@ func TestLoadIgnoresDatabaseURLFromEnvironment(t *testing.T) {
 func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 	t.Parallel()
 
+	const (
+		urlField      = "App.Database.URL"
+		userField     = "App.Database.User"
+		passwordField = "App.Database.Password"
+		timeoutField  = "App.Database.ConnectTimeout"
+		maxConnsField = "App.Database.MaxConns"
+		minConnsField = "App.Database.MinConns"
+		requiredTag   = "required"
+	)
+
 	tests := []struct {
-		name     string
-		contents string
+		name           string
+		contents       string
+		wantValidation map[string]string
 	}{
 		{name: "empty document", contents: ""},
-		{name: "missing database", contents: "{}"},
+		{name: "top-level sequence", contents: "[database]"},
+		{name: "top-level scalar", contents: "database"},
+		{
+			name: "missing database",
+			wantValidation: map[string]string{
+				urlField:      requiredTag,
+				userField:     requiredTag,
+				passwordField: requiredTag,
+				timeoutField:  "gt",
+				maxConnsField: "gt",
+			},
+			contents: "{}",
+		},
 		{
 			name: "unknown section",
 			contents: `
@@ -152,7 +183,17 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "empty URL",
+			name: "missing URL", wantValidation: map[string]string{urlField: requiredTag},
+			contents: `
+            database:
+              user: graphql
+              password: graphql_dev
+              connect_timeout: 5s
+              max_conns: 10
+            `,
+		},
+		{
+			name: "empty URL", wantValidation: map[string]string{urlField: requiredTag},
 			contents: `
             database:
               user: graphql
@@ -164,7 +205,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "null URL",
+			name: "null URL", wantValidation: map[string]string{urlField: requiredTag},
 			contents: `
             database:
               user: graphql
@@ -176,7 +217,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "missing user",
+			name: "missing user", wantValidation: map[string]string{userField: requiredTag},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -186,7 +227,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "empty user",
+			name: "empty user", wantValidation: map[string]string{userField: requiredTag},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -197,7 +238,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "null user",
+			name: "null user", wantValidation: map[string]string{userField: requiredTag},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -208,7 +249,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "missing password",
+			name: "missing password", wantValidation: map[string]string{passwordField: requiredTag},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -218,7 +259,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "empty password",
+			name: "empty password", wantValidation: map[string]string{passwordField: requiredTag},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -229,7 +270,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "null password",
+			name: "null password", wantValidation: map[string]string{passwordField: requiredTag},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -240,7 +281,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "missing timeout",
+			name: "missing timeout", wantValidation: map[string]string{timeoutField: "gt"},
 			contents: `
             database:
               user: graphql
@@ -251,7 +292,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "zero timeout",
+			name: "zero timeout", wantValidation: map[string]string{timeoutField: "gt"},
 			contents: `
             database:
               user: graphql
@@ -262,7 +303,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "negative timeout",
+			name: "negative timeout", wantValidation: map[string]string{timeoutField: "gt"},
 			contents: `
             database:
               user: graphql
@@ -295,7 +336,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "missing maximum connections",
+			name: "missing maximum connections", wantValidation: map[string]string{maxConnsField: "gt"},
 			contents: `
             database:
               user: graphql
@@ -306,7 +347,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "zero maximum connections",
+			name: "zero maximum connections", wantValidation: map[string]string{maxConnsField: "gt"},
 			contents: `
             database:
               user: graphql
@@ -317,7 +358,8 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "negative maximum connections",
+			name:           "negative maximum connections",
+			wantValidation: map[string]string{maxConnsField: "gt", minConnsField: "ltefield"},
 			contents: `
             database:
               user: graphql
@@ -339,7 +381,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "negative minimum connections",
+			name: "negative minimum connections", wantValidation: map[string]string{minConnsField: "gte"},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -351,7 +393,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "minimum exceeds maximum",
+			name: "minimum exceeds maximum", wantValidation: map[string]string{minConnsField: "ltefield"},
 			contents: `
             database:
               url: postgres://localhost/test
@@ -360,18 +402,6 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
               connect_timeout: 5s
               max_conns: 10
               min_conns: 11
-            `,
-		},
-		{
-			name: "secrets are absent from YAML errors",
-			contents: `
-            database:
-              url: postgres://localhost/test
-              user: graphql
-              password: sensitive-password
-              connect_timeout: sensitive-password
-              max_conns: 10
-              min_conns: 0
             `,
 		},
 	}
@@ -385,8 +415,24 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 
 			app, err := config.Load(filesystem, "config.yaml")
 			require.Error(t, err)
-			require.NotContains(t, err.Error(), "sensitive-password")
 			require.Nil(t, app)
+
+			if test.wantValidation == nil {
+				require.ErrorContains(t, err, "decode configuration:")
+
+				return
+			}
+
+			var validationErrors validator.ValidationErrors
+
+			require.ErrorAs(t, err, &validationErrors)
+
+			got := make(map[string]string, len(validationErrors))
+			for _, failure := range validationErrors {
+				got[failure.Namespace()] = failure.Tag()
+			}
+
+			require.Equal(t, test.wantValidation, got)
 		})
 	}
 }
@@ -398,6 +444,69 @@ func TestLoadMissingFile(t *testing.T) {
 
 	app, err := config.Load(filesystem, "missing.yaml")
 	require.ErrorIs(t, err, fs.ErrNotExist)
+	require.Nil(t, app)
+}
+
+func TestLoadPropagatesFileErrors(t *testing.T) {
+	t.Parallel()
+
+	readFailure := errors.New("read interrupted")
+
+	tests := []struct {
+		name    string
+		openErr error
+		readErr error
+		wantErr error
+	}{
+		{name: "open permission denied", openErr: fs.ErrPermission, wantErr: fs.ErrPermission},
+		{name: "read failure closes file", readErr: readFailure, wantErr: readFailure},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			filesystem := &readErrorFS{Fs: afero.NewMemMapFs(), openErr: test.openErr, readErr: test.readErr}
+			require.NoError(t, afero.WriteFile(filesystem.Fs, "config.yaml", []byte("configuration contents"), 0o600))
+
+			app, err := config.Load(filesystem, "config.yaml")
+			require.ErrorIs(t, err, test.wantErr)
+			require.ErrorContains(t, err, "read configuration:")
+			require.Nil(t, app)
+
+			if test.openErr != nil {
+				var pathError *fs.PathError
+
+				require.ErrorAs(t, err, &pathError)
+				require.Equal(t, "config.yaml", pathError.Path)
+				require.Nil(t, filesystem.opened)
+
+				return
+			}
+
+			require.NotNil(t, filesystem.opened)
+			require.True(t, filesystem.opened.closed)
+		})
+	}
+}
+
+func TestLoadSanitizesDecodeErrors(t *testing.T) {
+	t.Parallel()
+
+	const contents = `
+            database:
+              url: postgres://localhost/test
+              user: graphql
+              password: sensitive-password
+              connect_timeout: sensitive-password
+              max_conns: 10
+            `
+
+	filesystem := afero.NewMemMapFs()
+	require.NoError(t, afero.WriteFile(filesystem, "config.yaml", []byte(contents), 0o600))
+
+	app, err := config.Load(filesystem, "config.yaml")
+	require.ErrorContains(t, err, "decode configuration:")
+	require.NotContains(t, err.Error(), "sensitive-password")
 	require.Nil(t, app)
 }
 
@@ -413,6 +522,16 @@ func TestLoadHTTPConfiguration(t *testing.T) {
               max_conns: 10
             `
 
+	var defaultHTTP = config.HTTP{
+		Addr:              "0.0.0.0:8080",
+		RequestTimeout:    10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownTimeout:   15 * time.Second,
+	}
+
 	tests := []struct {
 		name     string
 		contents string
@@ -420,15 +539,21 @@ func TestLoadHTTPConfiguration(t *testing.T) {
 	}{
 		{
 			name: "omitted section uses defaults",
-			want: config.HTTP{
-				Addr:              "0.0.0.0:8080",
-				RequestTimeout:    10 * time.Second,
-				ReadHeaderTimeout: 5 * time.Second,
-				ReadTimeout:       10 * time.Second,
-				WriteTimeout:      15 * time.Second,
-				IdleTimeout:       time.Minute,
-				ShutdownTimeout:   15 * time.Second,
-			},
+			want: defaultHTTP,
+		},
+		{
+			name: "empty section keeps defaults",
+			contents: `
+            http: {}
+            `,
+			want: defaultHTTP,
+		},
+		{
+			name: "null section keeps defaults",
+			contents: `
+            http: null
+            `,
+			want: defaultHTTP,
 		},
 		{
 			name: "omitted fields keep defaults",
@@ -487,7 +612,10 @@ func TestLoadHTTPConfiguration(t *testing.T) {
 func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
 	t.Parallel()
 
-	const databaseYAML = `
+	const (
+		addrField    = "App.HTTP.Addr"
+		addressTag   = "hostname_port"
+		databaseYAML = `
             database:
               url: postgres://localhost/test
               user: graphql
@@ -495,21 +623,55 @@ func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
               connect_timeout: 5s
               max_conns: 10
             `
+	)
 
 	tests := []struct {
-		name     string
-		contents string
+		name           string
+		contents       string
+		wantValidation map[string]string
 	}{
-		{name: "empty address", contents: "addr: ''"},
-		{name: "missing port", contents: "addr: localhost"},
-		{name: "invalid port", contents: "addr: localhost:70000"},
-		{name: "zero request timeout", contents: "request_timeout: 0s"},
-		{name: "zero header timeout", contents: "read_header_timeout: 0s"},
-		{name: "zero read timeout", contents: "read_timeout: 0s"},
-		{name: "zero write timeout", contents: "write_timeout: 0s"},
-		{name: "zero idle timeout", contents: "idle_timeout: 0s"},
-		{name: "zero shutdown timeout", contents: "shutdown_timeout: 0s"},
-		{name: "negative timeout", contents: "request_timeout: -1s"},
+		{name: "empty address", wantValidation: map[string]string{addrField: addressTag}, contents: "addr: ''"},
+		{name: "missing port", wantValidation: map[string]string{addrField: addressTag}, contents: "addr: localhost"},
+		{
+			name:           "invalid port",
+			wantValidation: map[string]string{addrField: addressTag},
+			contents:       "addr: localhost:70000",
+		},
+		{
+			name:           "zero request timeout",
+			wantValidation: map[string]string{"App.HTTP.RequestTimeout": "gt"},
+			contents:       "request_timeout: 0s",
+		},
+		{
+			name:           "zero header timeout",
+			wantValidation: map[string]string{"App.HTTP.ReadHeaderTimeout": "gt"},
+			contents:       "read_header_timeout: 0s",
+		},
+		{
+			name:           "zero read timeout",
+			wantValidation: map[string]string{"App.HTTP.ReadTimeout": "gt"},
+			contents:       "read_timeout: 0s",
+		},
+		{
+			name:           "zero write timeout",
+			wantValidation: map[string]string{"App.HTTP.WriteTimeout": "gt"},
+			contents:       "write_timeout: 0s",
+		},
+		{
+			name:           "zero idle timeout",
+			wantValidation: map[string]string{"App.HTTP.IdleTimeout": "gt"},
+			contents:       "idle_timeout: 0s",
+		},
+		{
+			name:           "zero shutdown timeout",
+			wantValidation: map[string]string{"App.HTTP.ShutdownTimeout": "gt"},
+			contents:       "shutdown_timeout: 0s",
+		},
+		{
+			name:           "negative timeout",
+			wantValidation: map[string]string{"App.HTTP.RequestTimeout": "gt"},
+			contents:       "request_timeout: -1s",
+		},
 		{name: "invalid timeout", contents: "request_timeout: immediately"},
 		{name: "unknown field", contents: "timeout: 5s"},
 	}
@@ -527,6 +689,23 @@ func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
 			app, err := config.Load(filesystem, "config.yaml")
 			require.Error(t, err)
 			require.Nil(t, app)
+
+			if test.wantValidation == nil {
+				require.ErrorContains(t, err, "decode configuration:")
+
+				return
+			}
+
+			var validationErrors validator.ValidationErrors
+
+			require.ErrorAs(t, err, &validationErrors)
+
+			got := make(map[string]string, len(validationErrors))
+			for _, failure := range validationErrors {
+				got[failure.Namespace()] = failure.Tag()
+			}
+
+			require.Equal(t, test.wantValidation, got)
 		})
 	}
 }
@@ -670,10 +849,10 @@ func TestLoadLoggerLevels(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
+func TestDefaultLoggerCoresAreNotSharedBetweenLoads(t *testing.T) {
 	t.Parallel()
 
-	const databaseYAML = `
+	const contents = `
             database:
               url: postgres://localhost/test
               user: graphql
@@ -682,30 +861,77 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
               max_conns: 10
             `
 
+	filesystem := afero.NewMemMapFs()
+	require.NoError(t, afero.WriteFile(filesystem, "config.yaml", []byte(contents), 0o600))
+
+	modified, err := config.Load(filesystem, "config.yaml")
+	require.NoError(t, err)
+
+	loaded, err := config.Load(filesystem, "config.yaml")
+	require.NoError(t, err)
+
+	require.Len(t, modified.Cores, 1)
+	require.Len(t, loaded.Cores, 1)
+
+	want := slices.Clone(loaded.Cores)
+	modified.Cores[0].Level = "fatal"
+
+	require.Empty(t, cmp.Diff(want, loaded.Cores))
+}
+
+func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
+	t.Parallel()
+
+	const (
+		coresField      = "App.Logger.Cores"
+		levelField      = "App.Logger.Cores[0].Level"
+		encodingField   = "App.Logger.Cores[0].Encoding"
+		outputField     = "App.Logger.Cores[0].Output"
+		timeFormatField = "App.Logger.Cores[0].TimeFormat"
+		pathField       = "App.Logger.Cores[0].Path"
+		enumTag         = "oneof"
+		filePathTag     = "required_if"
+		databaseYAML    = `
+            database:
+              url: postgres://localhost/test
+              user: graphql
+              password: graphql_dev
+              connect_timeout: 5s
+              max_conns: 10
+            `
+	)
+
 	tests := []struct {
-		name     string
-		contents string
+		name           string
+		contents       string
+		wantValidation map[string]string
 	}{
 		{
-			name: "empty cores",
+			name: "empty cores", wantValidation: map[string]string{coresField: "min"},
 			contents: `
             logger: {cores: []}
             `,
 		},
 		{
-			name: "null cores",
+			name: "null cores", wantValidation: map[string]string{coresField: "required"},
 			contents: `
             logger: {cores: null}
             `,
 		},
 		{
 			name: "empty core",
+			wantValidation: map[string]string{
+				levelField:      enumTag,
+				encodingField:   enumTag,
+				outputField:     enumTag,
+				timeFormatField: enumTag,
+			},
 			contents: `
             logger: {cores: [{}]}
             `,
 		},
 		{
-			name: "null core",
+			name: "null core", wantValidation: map[string]string{coresField: "min"},
 			contents: `
             logger: {cores: [null]}
             `,
@@ -723,7 +949,21 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "empty level",
+			name: "unknown core field",
+			contents: `
+            logger:
+              cores:
+                - {level: info, encoding: json, output: stdout, time_format: utc, extra: true}
+            `,
+		},
+		{
+			name: "cores must be a sequence",
+			contents: `
+            logger: {cores: {level: info}}
+            `,
+		},
+		{
+			name: "empty level", wantValidation: map[string]string{levelField: enumTag},
 			contents: `
             logger:
               cores:
@@ -731,7 +971,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "unknown level",
+			name: "unknown level", wantValidation: map[string]string{levelField: enumTag},
 			contents: `
             logger:
               cores:
@@ -739,7 +979,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "uppercase level",
+			name: "uppercase level", wantValidation: map[string]string{levelField: enumTag},
 			contents: `
             logger:
               cores:
@@ -747,7 +987,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "numeric level",
+			name: "numeric level", wantValidation: map[string]string{levelField: enumTag},
 			contents: `
             logger:
               cores:
@@ -755,7 +995,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "empty encoding",
+			name: "empty encoding", wantValidation: map[string]string{encodingField: enumTag},
 			contents: `
             logger:
               cores:
@@ -763,7 +1003,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "unknown encoding",
+			name: "unknown encoding", wantValidation: map[string]string{encodingField: enumTag},
 			contents: `
             logger:
               cores:
@@ -771,7 +1011,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "uppercase encoding",
+			name: "uppercase encoding", wantValidation: map[string]string{encodingField: enumTag},
 			contents: `
             logger:
               cores:
@@ -779,7 +1019,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "unknown output",
+			name: "unknown output", wantValidation: map[string]string{outputField: enumTag},
 			contents: `
             logger:
               cores:
@@ -787,7 +1027,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "missing output",
+			name: "missing output", wantValidation: map[string]string{outputField: enumTag},
 			contents: `
             logger:
               cores:
@@ -795,7 +1035,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "file without path",
+			name: "file without path", wantValidation: map[string]string{pathField: filePathTag},
 			contents: `
             logger:
               cores:
@@ -803,7 +1043,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "file with empty path",
+			name: "file with empty path", wantValidation: map[string]string{pathField: filePathTag},
 			contents: `
             logger:
               cores:
@@ -811,7 +1051,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "unknown time format",
+			name: "unknown time format", wantValidation: map[string]string{timeFormatField: enumTag},
 			contents: `
             logger:
               cores:
@@ -819,7 +1059,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "missing time format",
+			name: "missing time format", wantValidation: map[string]string{timeFormatField: enumTag},
 			contents: `
             logger:
               cores:
@@ -827,7 +1067,7 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
             `,
 		},
 		{
-			name: "invalid second core",
+			name: "invalid second core", wantValidation: map[string]string{"App.Logger.Cores[1].Path": filePathTag},
 			contents: `
             logger:
               cores:
@@ -848,6 +1088,67 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
 			app, err := config.Load(filesystem, "config.yaml")
 			require.Error(t, err)
 			require.Nil(t, app)
+
+			if test.wantValidation == nil {
+				require.ErrorContains(t, err, "decode configuration:")
+
+				return
+			}
+
+			var validationErrors validator.ValidationErrors
+
+			require.ErrorAs(t, err, &validationErrors)
+
+			got := make(map[string]string, len(validationErrors))
+			for _, failure := range validationErrors {
+				got[failure.Namespace()] = failure.Tag()
+			}
+
+			require.Equal(t, test.wantValidation, got)
 		})
 	}
+}
+
+type readErrorFS struct {
+	afero.Fs
+
+	openErr error
+	readErr error
+	opened  *readErrorFile
+}
+
+func (filesystem *readErrorFS) Open(name string) (afero.File, error) {
+	if filesystem.openErr != nil {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: filesystem.openErr}
+	}
+
+	file, err := filesystem.Fs.Open(name)
+	if err != nil {
+		return nil, fmt.Errorf("open test configuration: %w", err)
+	}
+
+	filesystem.opened = &readErrorFile{File: file, err: filesystem.readErr}
+
+	return filesystem.opened, nil
+}
+
+type readErrorFile struct {
+	afero.File
+
+	err    error
+	closed bool
+}
+
+func (file *readErrorFile) Read([]byte) (int, error) {
+	return 0, file.err
+}
+
+func (file *readErrorFile) Close() error {
+	file.closed = true
+
+	if err := file.File.Close(); err != nil {
+		return fmt.Errorf("close test configuration: %w", err)
+	}
+
+	return nil
 }
