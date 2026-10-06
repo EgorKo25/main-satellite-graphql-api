@@ -25,7 +25,7 @@ func main() {
 		panic(err)
 	}
 
-	if err = logger.Initialize(cfg.Logger); err != nil {
+	if err = logger.Initialize(fs, cfg.Logger); err != nil {
 		panic(err)
 	}
 

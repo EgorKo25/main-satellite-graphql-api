@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +17,7 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -783,17 +782,18 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 
 			reader.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return(nil, test.err)
 
-			path := filepath.Join(t.TempDir(), "graphql.log")
+			filesystem := afero.NewMemMapFs()
+			path := "graphql.log"
 			cfg := config.Logger{Cores: []config.LoggerCore{{
 				Level: testLogLevel, Encoding: testLogEncoding, Output: "file", Path: path, TimeFormat: "utc",
 			}}}
-			require.NoError(t, logger.Initialize(cfg))
+			require.NoError(t, logger.Initialize(filesystem, cfg))
 			t.Cleanup(func() {
 				require.NoError(t, logger.Get("graphql").Close())
 
 				cfg.Cores[0].Output = "stderr"
 				cfg.Cores[0].Path = ""
-				require.NoError(t, logger.Initialize(cfg))
+				require.NoError(t, logger.Initialize(filesystem, cfg))
 			})
 
 			result := requestGraphQL(t, NewHandler(reader, writer), "{main{id}}", nil)
@@ -801,7 +801,7 @@ func TestInternalErrorsAreSanitizedAndLogged(t *testing.T) {
 			require.Equal(t, "internal server error", result.Errors[0].Message)
 			require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
 
-			output, err := os.ReadFile(path)
+			output, err := afero.ReadFile(filesystem, path)
 			require.NoError(t, err)
 			require.Contains(t, string(output), test.err.Error())
 		})
@@ -820,17 +820,18 @@ func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
 			panic("private panic")
 		})
 
-	path := filepath.Join(t.TempDir(), "graphql.log")
+	filesystem := afero.NewMemMapFs()
+	path := "graphql.log"
 	cfg := config.Logger{Cores: []config.LoggerCore{{
 		Level: testLogLevel, Encoding: testLogEncoding, Output: "file", Path: path, TimeFormat: "utc",
 	}}}
-	require.NoError(t, logger.Initialize(cfg))
+	require.NoError(t, logger.Initialize(filesystem, cfg))
 	t.Cleanup(func() {
 		require.NoError(t, logger.Get("graphql").Close())
 
 		cfg.Cores[0].Output = "stderr"
 		cfg.Cores[0].Path = ""
-		require.NoError(t, logger.Initialize(cfg))
+		require.NoError(t, logger.Initialize(filesystem, cfg))
 	})
 
 	result := requestGraphQL(t, NewHandler(reader, writer), "{main{id}}", nil)
@@ -838,7 +839,7 @@ func TestResolverPanicIsSanitizedAndLogged(t *testing.T) {
 	require.Equal(t, "internal server error", result.Errors[0].Message)
 	require.Equal(t, internalServerError, result.Errors[0].Extensions["code"])
 
-	output, err := os.ReadFile(path)
+	output, err := afero.ReadFile(filesystem, path)
 	require.NoError(t, err)
 	require.Contains(t, string(output), "private panic")
 }

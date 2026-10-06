@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
+	"github.com/spf13/afero"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -18,8 +20,8 @@ var globalLogger Logger = &zapLogger{
 	close: func() error { return nil },
 }
 
-func Initialize(cfg config.Logger) error {
-	log, err := New(cfg)
+func Initialize(fs afero.Fs, cfg config.Logger) error {
+	log, err := New(fs, cfg)
 	if err != nil {
 		return err
 	}
@@ -33,15 +35,15 @@ func Get(name string) Logger {
 	return globalLogger.Named(name)
 }
 
-func New(cfg config.Logger) (Logger, error) {
+func New(fs afero.Fs, cfg config.Logger) (Logger, error) {
 	cores := make([]zapcore.Core, 0, len(cfg.Cores))
-	closers := make([]func(), 0, len(cfg.Cores))
+	closers := make([]func() error, 0, len(cfg.Cores))
 
 	for _, coreConfig := range cfg.Cores {
-		core, closeOutput, err := newCore(coreConfig)
+		core, closeOutput, err := newCore(fs, coreConfig)
 		if err != nil {
 			for _, closeOpened := range closers {
-				closeOpened()
+				err = errors.Join(err, closeOpened())
 			}
 
 			return nil, err
@@ -59,11 +61,11 @@ func New(cfg config.Logger) (Logger, error) {
 		err := log.Sync()
 
 		for _, closeOutput := range closers {
-			closeOutput()
+			err = errors.Join(err, closeOutput())
 		}
 
 		if err != nil {
-			return fmt.Errorf("sync logger outputs: %w", err)
+			return fmt.Errorf("sync and close logger outputs: %w", err)
 		}
 
 		return nil
@@ -123,7 +125,7 @@ func (logger *zapLogger) Close() error {
 	return nil
 }
 
-func newCore(cfg config.LoggerCore) (zapcore.Core, func(), error) {
+func newCore(filesystem afero.Fs, cfg config.LoggerCore) (zapcore.Core, func() error, error) {
 	level, err := zapcore.ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse logger level: %w", err)
@@ -141,7 +143,7 @@ func newCore(cfg config.LoggerCore) (zapcore.Core, func(), error) {
 	var (
 		encoder     zapcore.Encoder
 		output      zapcore.WriteSyncer
-		closeOutput func()
+		closeOutput func() error
 	)
 
 	if cfg.Encoding == "console" {
@@ -156,14 +158,17 @@ func newCore(cfg config.LoggerCore) (zapcore.Core, func(), error) {
 	case "stderr":
 		output = zapcore.Lock(zapcore.AddSync(io.MultiWriter(os.Stderr)))
 	case "file":
-		if err = os.MkdirAll(filepath.Dir(cfg.Path), 0o750); err != nil {
+		if err = filesystem.MkdirAll(filepath.Dir(cfg.Path), 0o750); err != nil {
 			return nil, nil, fmt.Errorf("create logger directory: %w", err)
 		}
 
-		output, closeOutput, err = zap.Open(filepath.Clean(cfg.Path))
-		if err != nil {
-			return nil, nil, fmt.Errorf("open logger output: %w", err)
+		file, openErr := filesystem.OpenFile(filepath.Clean(cfg.Path), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+		if openErr != nil {
+			return nil, nil, fmt.Errorf("open logger output: %w", openErr)
 		}
+
+		output = zapcore.Lock(file)
+		closeOutput = file.Close
 	default:
 		return nil, nil, fmt.Errorf("unsupported logger output %q", cfg.Output)
 	}
