@@ -12,6 +12,7 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/ory/dockertest/v4 v4.0.0
 	github.com/pressly/goose/v3 v3.28.0
+	github.com/samber/lo v1.53.0
 	github.com/spf13/afero v1.15.0
 	github.com/stretchr/testify v1.12.1
 	github.com/vektah/gqlparser/v2 v2.5.37

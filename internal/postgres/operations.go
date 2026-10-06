@@ -12,6 +12,7 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
 	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
+	"github.com/samber/lo"
 )
 
 const deletedAtColumn = "deleted_at"
@@ -276,13 +277,11 @@ func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*
 		return nil, fmt.Errorf("main %d must have exactly one satellite, got %d", mainID, satelliteCount)
 	}
 
-	for _, kind := range satelliteKinds {
-		if main.SubObj == kind {
-			return &main, nil
-		}
+	if _, known := lo.FindKey(satelliteKinds, main.SubObj); !known {
+		return nil, fmt.Errorf("main %d has invalid sub_obj %q", mainID, main.SubObj)
 	}
 
-	return nil, fmt.Errorf("main %d has invalid sub_obj %q", mainID, main.SubObj)
+	return &main, nil
 }
 
 func collectSatellite(rows pgx.Rows, kind domain.Kind) (domain.SubObject, error) {
