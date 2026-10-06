@@ -2,22 +2,20 @@ package logger_test
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 const (
@@ -32,18 +30,19 @@ const (
 
 //nolint:paralleltest // Replaces the process-global logger.
 func TestInitialize(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "output.log")
-	require.NoError(t, logger.Initialize(config.Logger{Cores: []config.LoggerCore{{
+	filesystem := afero.NewMemMapFs()
+	path := filepath.Join("logs", "output.log")
+	require.NoError(t, logger.Initialize(filesystem, config.Logger{Cores: []config.LoggerCore{{
 		Level: infoLevel, Encoding: jsonEncoding, Output: fileOutput, Path: path, TimeFormat: utcFormat,
 	}}}))
 	t.Cleanup(func() { require.NoError(t, logger.Get("main").Close()) })
 
 	logger.Get("graphql").Info("initialized")
-	require.Error(t, logger.Initialize(config.Logger{Cores: []config.LoggerCore{{Level: "invalid"}}}))
+	require.Error(t, logger.Initialize(filesystem, config.Logger{Cores: []config.LoggerCore{{Level: "invalid"}}}))
 	logger.Get("postgres").Info("previous logger retained")
 	require.NoError(t, logger.Get("main").Sync())
 
-	contents, err := os.ReadFile(path)
+	contents, err := afero.ReadFile(filesystem, path)
 	require.NoError(t, err)
 
 	decoder := json.NewDecoder(bytes.NewReader(contents))
@@ -82,14 +81,14 @@ func TestLevels(t *testing.T) {
 		t.Run(test.level, func(t *testing.T) {
 			t.Parallel()
 
-			log, path := newTestLogger(t, test.level, jsonEncoding, utcFormat)
+			log, filesystem, path := newTestLogger(t, test.level, jsonEncoding, utcFormat)
 			log.Debug(debugLevel)
 			log.Info(infoLevel)
 			log.Warn(warnLevel)
 			log.Error("failure", errors.New("operation failed"))
 			require.NoError(t, log.Sync())
 
-			contents, err := os.ReadFile(path)
+			contents, err := afero.ReadFile(filesystem, path)
 			require.NoError(t, err)
 
 			decoder := json.NewDecoder(bytes.NewReader(contents))
@@ -117,10 +116,10 @@ func TestEncoding(t *testing.T) {
 		t.Run(encoding, func(t *testing.T) {
 			t.Parallel()
 
-			log, path := newTestLogger(t, infoLevel, encoding, utcFormat)
+			log, filesystem, path := newTestLogger(t, infoLevel, encoding, utcFormat)
 			log.Info("server ready", logger.String("address", ":8080"))
 
-			contents, err := os.ReadFile(path)
+			contents, err := afero.ReadFile(filesystem, path)
 			require.NoError(t, err)
 
 			if encoding == jsonEncoding {
@@ -155,10 +154,10 @@ func TestEncoding(t *testing.T) {
 func TestLocalTime(t *testing.T) {
 	t.Parallel()
 
-	log, path := newTestLogger(t, infoLevel, jsonEncoding, "local")
+	log, filesystem, path := newTestLogger(t, infoLevel, jsonEncoding, "local")
 	log.Info("local timestamp")
 
-	contents, err := os.ReadFile(path)
+	contents, err := afero.ReadFile(filesystem, path)
 	require.NoError(t, err)
 
 	var entry struct {
@@ -178,7 +177,7 @@ func TestLocalTime(t *testing.T) {
 func TestInvalidLevel(t *testing.T) {
 	t.Parallel()
 
-	log, err := logger.New(config.Logger{Cores: []config.LoggerCore{{Level: "verbose"}}})
+	log, err := logger.New(afero.NewMemMapFs(), config.Logger{Cores: []config.LoggerCore{{Level: "verbose"}}})
 	require.ErrorContains(t, err, "parse logger level")
 	require.Nil(t, log)
 }
@@ -186,11 +185,11 @@ func TestInvalidLevel(t *testing.T) {
 func TestErrorAttributes(t *testing.T) {
 	t.Parallel()
 
-	log, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
+	log, filesystem, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
 	log.Error("database failure", errors.New("connection refused"),
 		logger.String("operation", "update"), logger.Any("attempt", 2))
 
-	contents, err := os.ReadFile(path)
+	contents, err := afero.ReadFile(filesystem, path)
 	require.NoError(t, err)
 
 	var entry struct {
@@ -212,7 +211,7 @@ func TestErrorAttributes(t *testing.T) {
 func TestDerivedLoggerIsolation(t *testing.T) {
 	t.Parallel()
 
-	log, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
+	log, filesystem, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
 	child := log.Named("graphql").With(logger.String("request", "first"))
 	grandchild := child.Named("resolver").With(logger.String("operation", "create"))
 	grandchild.Info("grandchild")
@@ -222,7 +221,7 @@ func TestDerivedLoggerIsolation(t *testing.T) {
 	require.NoError(t, child.Close())
 	require.NoError(t, log.Close())
 
-	contents, err := os.ReadFile(path)
+	contents, err := afero.ReadFile(filesystem, path)
 	require.NoError(t, err)
 
 	decoder := json.NewDecoder(bytes.NewReader(contents))
@@ -250,13 +249,13 @@ func TestDerivedLoggerIsolation(t *testing.T) {
 func TestCaller(t *testing.T) {
 	t.Parallel()
 
-	log, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
+	log, filesystem, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
 	_, _, line, ok := runtime.Caller(0)
 
 	log.Info("caller")
 	require.True(t, ok)
 
-	contents, err := os.ReadFile(path)
+	contents, err := afero.ReadFile(filesystem, path)
 	require.NoError(t, err)
 
 	var entry struct {
@@ -270,49 +269,145 @@ func TestCaller(t *testing.T) {
 func TestMultipleCores(t *testing.T) {
 	t.Parallel()
 
-	directory := t.TempDir()
-	cores := []config.LoggerCore{
-		{
-			Level:      infoLevel,
-			Encoding:   jsonEncoding,
-			Output:     fileOutput,
-			Path:       filepath.Join(directory, "all.log"),
-			TimeFormat: utcFormat,
-		},
-		{
-			Level:      errorLevel,
-			Encoding:   jsonEncoding,
-			Output:     fileOutput,
-			Path:       filepath.Join(directory, "errors.log"),
-			TimeFormat: utcFormat,
-		},
+	var messages = []string{"ready\nsecond line", "warning", "failure"}
+
+	tests := []struct {
+		name       string
+		level      string
+		wantSecond []string
+	}{
+		{name: "same thresholds", level: infoLevel, wantSecond: messages},
+		{name: "different thresholds", level: errorLevel, wantSecond: []string{"failure"}},
 	}
-	log, err := logger.New(config.Logger{Cores: cores})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			filesystem := afero.NewMemMapFs()
+			cores := []config.LoggerCore{
+				{
+					Level:      infoLevel,
+					Encoding:   jsonEncoding,
+					Output:     fileOutput,
+					Path:       filepath.Join("logs", "all.log"),
+					TimeFormat: utcFormat,
+				},
+				{
+					Level:      test.level,
+					Encoding:   jsonEncoding,
+					Output:     fileOutput,
+					Path:       filepath.Join("logs", "filtered.log"),
+					TimeFormat: utcFormat,
+				},
+			}
+			log, err := logger.New(filesystem, config.Logger{Cores: cores})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, log.Close()) })
+
+			log.Info(messages[0])
+			log.Warn(messages[1])
+			log.Error(messages[2], errors.New("database failed"))
+			require.NoError(t, log.Sync())
+
+			for index, expected := range [][]string{messages, test.wantSecond} {
+				contents, readErr := afero.ReadFile(filesystem, cores[index].Path)
+				require.NoError(t, readErr)
+
+				lines := bytes.Split(bytes.TrimSpace(contents), []byte("\n"))
+				require.Len(t, lines, len(expected))
+
+				for entryIndex, line := range lines {
+					var entry struct {
+						Message string `json:"msg"`
+					}
+
+					require.NoError(t, json.Unmarshal(line, &entry))
+					require.Equal(t, expected[entryIndex], entry.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestAppendExistingFile(t *testing.T) {
+	t.Parallel()
+
+	const (
+		path     = "output.log"
+		previous = "previous contents\n"
+	)
+
+	filesystem := afero.NewMemMapFs()
+	require.NoError(t, afero.WriteFile(filesystem, path, []byte(previous), 0o600))
+
+	log, err := logger.New(filesystem, config.Logger{Cores: []config.LoggerCore{{
+		Level: infoLevel, Encoding: jsonEncoding, Output: fileOutput, Path: path, TimeFormat: utcFormat,
+	}}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, log.Close()) })
 
-	log.Info("ready")
-	log.Error("failure", errors.New("database failed"))
+	log.Info("appended")
+	require.NoError(t, log.Close())
 
-	for index, expected := range [][]string{{"ready", "failure"}, {"failure"}} {
-		contents, readErr := os.ReadFile(cores[index].Path)
-		require.NoError(t, readErr)
+	contents, err := afero.ReadFile(filesystem, path)
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(contents, []byte(previous)), "existing file contents must remain intact")
 
-		decoder := json.NewDecoder(bytes.NewReader(contents))
-		messages := make([]string, 0, len(expected))
-
-		for decoder.More() {
-			var entry struct {
-				Message string `json:"msg"`
-			}
-
-			require.NoError(t, decoder.Decode(&entry))
-
-			messages = append(messages, entry.Message)
-		}
-
-		require.Equal(t, expected, messages)
+	var entry struct {
+		Message string `json:"msg"`
 	}
+
+	require.NoError(t, json.Unmarshal(contents[len(previous):], &entry))
+	require.Equal(t, "appended", entry.Message)
+}
+
+func TestConcurrentWritesKeepCompleteRecords(t *testing.T) {
+	t.Parallel()
+
+	const (
+		workerCount = 4
+		entryCount  = 25
+	)
+
+	log, filesystem, path := newTestLogger(t, infoLevel, jsonEncoding, utcFormat)
+
+	var workers sync.WaitGroup
+
+	for worker := range workerCount {
+		workers.Go(func() {
+			for entry := range entryCount {
+				log.Info("concurrent", logger.Any("worker", worker), logger.Any("entry", entry))
+			}
+		})
+	}
+
+	workers.Wait()
+	require.NoError(t, log.Close())
+
+	contents, err := afero.ReadFile(filesystem, path)
+	require.NoError(t, err)
+
+	type record struct {
+		Message string `json:"msg"`
+		Worker  int    `json:"worker"`
+		Entry   int    `json:"entry"`
+	}
+
+	want := make([]record, 0, workerCount*entryCount)
+	for worker := range workerCount {
+		for entry := range entryCount {
+			want = append(want, record{Message: "concurrent", Worker: worker, Entry: entry})
+		}
+	}
+
+	lines := bytes.Split(bytes.TrimSpace(contents), []byte("\n"))
+	got := make([]record, len(lines))
+
+	for index, line := range lines {
+		require.NoError(t, json.Unmarshal(line, &got[index]))
+	}
+
+	require.ElementsMatch(t, want, got)
 }
 
 func TestConsoleOutputs(t *testing.T) {
@@ -322,7 +417,7 @@ func TestConsoleOutputs(t *testing.T) {
 		t.Run(output, func(t *testing.T) {
 			t.Parallel()
 
-			log, err := logger.New(config.Logger{Cores: []config.LoggerCore{{
+			log, err := logger.New(afero.NewMemMapFs(), config.Logger{Cores: []config.LoggerCore{{
 				Level: infoLevel, Encoding: jsonEncoding, Output: output, TimeFormat: utcFormat,
 			}}})
 			require.NoError(t, err)
@@ -332,94 +427,16 @@ func TestConsoleOutputs(t *testing.T) {
 	}
 }
 
-func TestFailedInitializationClosesOpenedSinks(t *testing.T) {
-	t.Parallel()
-
-	sink := &testSink{}
-	scheme := "logger" + strings.ToLower(rand.Text())
-	require.NoError(t, zap.RegisterSink(scheme, func(*url.URL) (zap.Sink, error) { return sink, nil }))
-
-	log, err := logger.New(config.Logger{Cores: []config.LoggerCore{
-		{Level: infoLevel, Encoding: jsonEncoding, Output: fileOutput, Path: scheme + ":output", TimeFormat: utcFormat},
-		{Level: infoLevel, Encoding: jsonEncoding, Output: fileOutput, Path: t.TempDir(), TimeFormat: utcFormat},
-	}})
-	require.ErrorContains(t, err, "open logger output")
-	require.Nil(t, log)
-	require.Equal(t, 1, sink.closeCalls)
-}
-
-func TestSync(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		err  error
-	}{
-		{name: "success"},
-		{name: "sink failure", err: errors.New("flush failed")},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			sink := &testSink{err: test.err}
-			scheme := "logger" + strings.ToLower(rand.Text())
-			require.NoError(t, zap.RegisterSink(scheme, func(*url.URL) (zap.Sink, error) { return sink, nil }))
-
-			log, err := logger.New(config.Logger{Cores: []config.LoggerCore{
-				{
-					Level:      infoLevel,
-					Encoding:   jsonEncoding,
-					Output:     fileOutput,
-					Path:       scheme + ":output",
-					TimeFormat: utcFormat,
-				},
-			}})
-			require.NoError(t, err)
-			t.Cleanup(func() { require.ErrorIs(t, log.Close(), test.err) })
-
-			log.Info("entry")
-			require.ErrorIs(t, log.Sync(), test.err)
-			require.Equal(t, 1, sink.syncCalls)
-			require.ErrorIs(t, log.Close(), test.err)
-			require.ErrorIs(t, log.Named("child").Close(), test.err)
-			require.Equal(t, 2, sink.syncCalls)
-			require.Equal(t, 1, sink.closeCalls)
-			require.Contains(t, sink.String(), "entry")
-		})
-	}
-}
-
-func newTestLogger(t *testing.T, level, encoding, timeFormat string) (logger.Logger, string) {
+func newTestLogger(t *testing.T, level, encoding, timeFormat string) (logger.Logger, afero.Fs, string) {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "nested", "output.log")
-	log, err := logger.New(config.Logger{Cores: []config.LoggerCore{{
+	filesystem := afero.NewMemMapFs()
+	path := filepath.Join("nested", "output.log")
+	log, err := logger.New(filesystem, config.Logger{Cores: []config.LoggerCore{{
 		Level: level, Encoding: encoding, Output: fileOutput, Path: path, TimeFormat: timeFormat,
 	}}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, log.Close()) })
 
-	return log, path
-}
-
-type testSink struct {
-	bytes.Buffer
-
-	err        error
-	syncCalls  int
-	closeCalls int
-}
-
-func (sink *testSink) Sync() error {
-	sink.syncCalls++
-
-	return sink.err
-}
-
-func (sink *testSink) Close() error {
-	sink.closeCalls++
-
-	return nil
+	return log, filesystem, path
 }

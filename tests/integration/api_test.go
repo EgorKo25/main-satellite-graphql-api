@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,7 +80,7 @@ const (
 var testDatabaseURL string
 
 func TestMain(tests *testing.M) {
-	err := logger.Initialize(config.Logger{Cores: []config.LoggerCore{{
+	err := logger.Initialize(afero.NewMemMapFs(), config.Logger{Cores: []config.LoggerCore{{
 		Level: "info", Encoding: "json", Output: "stderr", TimeFormat: "utc",
 	}}})
 	if err != nil {

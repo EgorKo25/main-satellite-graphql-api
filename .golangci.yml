@@ -92,6 +92,7 @@ linters:
     varnamelen:
       ignore-decls:
         - tx pgx.Tx
+        - fs afero.Fs
     revive:
       severity: error
       rules:
