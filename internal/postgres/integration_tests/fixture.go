@@ -32,6 +32,7 @@ func New(ctx context.Context) (server *Server, err error) {
 
 	resource, err := pool.Run(ctx, "postgres",
 		dockertest.WithTag("17.9-bookworm"),
+		dockertest.WithCmd([]string{"postgres", "-c", "shared_preload_libraries=pg_stat_statements"}),
 		dockertest.WithEnv([]string{
 			"POSTGRES_USER=graphql_test",
 			"POSTGRES_PASSWORD=graphql_test",

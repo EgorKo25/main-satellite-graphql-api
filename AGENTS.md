@@ -21,9 +21,9 @@
 - **Логгер глобальный по решению пользователя:** `main` один раз вызывает `logger.Initialize(fs, cfg.Logger)` с той же FS, что передана в `config.Load`; компоненты используют `logger.Get(name)`. Не передавай логгер через конструкторы. Это исключение не делает конфигурацию глобальной.
 - Адаптер логгера использует zap; выходы и их настройки описываются списком `logger.cores` в YAML. Сохраняй несколько настраиваемых выходов.
 - Файловые выходы логгера работают через переданную `afero.Fs`. Проверяй запись, дозапись и несколько выходов на MemMapFs; ошибки открытия, записи, Sync и Close вводи на границе FS/File в тестах. MemMapFs сама не воспроизводит ошибки физического диска. Закрывай все открытые файлы даже при ошибке одного из них, сохраняя причины ошибок.
-- Ошибка загрузки конфигурации — `panic` непосредственно в `main`. После инициализации логгера для фатальных ошибок запуска допустим `log.Fatal`. Сразу после получения логгера ставь `defer func() { _ = log.Close() }()`: пользователь разрешил игнорировать ошибку закрытия и возможную потерю последних записей. `log.Fatal` завершает процесс без defer.
+- Ошибка загрузки конфигурации — `panic` непосредственно в `main`. Сразу после получения логгера ставь `defer func() { _ = log.Close() }()`: пользователь разрешил игнорировать ошибку закрытия. Сразу после проверки ошибки `postgres.New` ставь `defer database.Close()`. После регистрации defer используй для ошибки запуска/Serve `log.Error` и `panic(err)`, чтобы закрыть ресурсы и завершиться с ненулевым кодом. `log.Fatal` обходит defer; не подавляй замечание gocritic об этом.
 - Не добавляй функцию `run` ради exit code. Обработка сигналов из `main` удалена по решению пользователя; используй `context.Background()`. SIGINT/SIGTERM завершают процесс без graceful shutdown и выполнения defer. В TestMain не вызывай os.Exit из defer: это скрывает panic.
-- Создание HTTP-сервера, маршруты, таймауты, запуск и graceful shutdown при отмене переданного контекста принадлежат `internal/server.Server`. `main` создаёт зависимости, передаёт `cfg.HTTP` и готовый GraphQL-handler в `server.New` и закрывает БД после возврата Serve. Не возвращай настройку `http.Server` в `main`.
+- Создание HTTP-сервера, маршруты, таймауты, запуск и graceful shutdown при отмене переданного контекста принадлежат `internal/server.Server`. `main` создаёт зависимости и передаёт `cfg.HTTP` и готовый GraphQL-handler в `server.New`. Вызов и проверку ошибки объединяй: `if err = httpServer.Serve(ctx); err != nil`. Не возвращай настройку `http.Server` в `main`.
 
 ## Модель и PostgreSQL
 
@@ -54,6 +54,7 @@
 ## Проверки и среда
 
 - Выполняй gofmt, относящиеся unit-тесты, go vet и golangci-lint v2. Изменения SQL, транзакций и маппинга проверяй настоящим PostgreSQL. Сохраняй воспроизводимую генерацию gqlgen и mockgen.
+- Не подавляй gocritic директивами, исключениями или отключением проверок; исправляй причину замечания.
 - Интеграционные тесты и fixture лежат вместе рядом с пакетом: `internal/postgres/integration_tests/`, подготовка БД — `fixture.go`. Не оставляй тесты в корне пакета и не создавай соседний `internal/testpostgres` только ради fixture.
 - Build tag — `integration`. Для PostgreSQL Dockertest запускает контейнер на пакет и отдельную БД с миграциями на тест. Docker обязателен: недоступность — ошибка, не skip. Контейнер очищает pool.Close, без AutoRemove. Config-интеграции используют MemMapFs без Docker.
 - Не очищай чужие БД и Docker volumes. Проверки down/up — только в собственной тестовой БД. Моки не заменяют SQL NULL, миграции, rollback, блокировки и гонки.
@@ -128,6 +129,7 @@ These are the user's preferences, scoped to the agreed task. Project-specific ru
 
 ### Mocks and generation
 
+- Never add functions, exports, constructors, flags or hooks to production/business packages solely for tests, even behind an integration build tag. Keep test support in test files or dedicated integration fixtures; use real public operations and external observation. Do not expose private state to satisfy a test.
 - Mock suitable boundaries to test interactions, arguments and errors. A mock returns configured results; it must not implement the real service's validation. A mocked error proves caller handling, not the real dependency's check.
 - Interfaces belong to actual consumers; simple values need no mocks. Real PostgreSQL integration coverage remains mandatory for migrations, NULL, transactions, locks and races.
 - Put a working `//go:generate` directly above the interface being mocked. Mockgen implements interfaces; do not add fake directives to every struct.

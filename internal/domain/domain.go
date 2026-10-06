@@ -30,7 +30,6 @@ type Main struct {
 
 type SubObject interface {
 	Kind() Kind
-	Metadata() *Satellite
 }
 
 type Satellite struct {
@@ -40,8 +39,6 @@ type Satellite struct {
 	UpdatedAt time.Time
 	DeletedAt *time.Time
 }
-
-func (satellite *Satellite) Metadata() *Satellite { return satellite }
 
 type Tool struct {
 	Satellite

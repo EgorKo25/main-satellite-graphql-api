@@ -32,18 +32,16 @@ func main() {
 
 	database, err := postgres.New(ctx, cfg.Database)
 	if err != nil {
-		//nolint:gocritic // Fatal intentionally skips deferred logger cleanup.
-		log.Fatal("initialize database", err)
+		log.Error("initialize database", err)
+		panic(err)
 	}
+	defer database.Close()
 
 	handler := graph.NewHandler(database, database)
 	httpServer := server.New(cfg.HTTP, handler)
 
-	err = httpServer.Serve(ctx)
-
-	database.Close()
-
-	if err != nil {
-		log.Fatal("HTTP server stopped", err)
+	if err = httpServer.Serve(ctx); err != nil {
+		log.Error("HTTP server stopped", err)
+		panic(err)
 	}
 }
