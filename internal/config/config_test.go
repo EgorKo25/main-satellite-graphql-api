@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/go-cmp/cmp"
+	"github.com/samber/lo"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 
@@ -427,10 +428,9 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 
 			require.ErrorAs(t, err, &validationErrors)
 
-			got := make(map[string]string, len(validationErrors))
-			for _, failure := range validationErrors {
-				got[failure.Namespace()] = failure.Tag()
-			}
+			got := lo.Associate(validationErrors, func(failure validator.FieldError) (string, string) {
+				return failure.Namespace(), failure.Tag()
+			})
 
 			require.Equal(t, test.wantValidation, got)
 		})
@@ -700,10 +700,9 @@ func TestLoadRejectsInvalidHTTPConfiguration(t *testing.T) {
 
 			require.ErrorAs(t, err, &validationErrors)
 
-			got := make(map[string]string, len(validationErrors))
-			for _, failure := range validationErrors {
-				got[failure.Namespace()] = failure.Tag()
-			}
+			got := lo.Associate(validationErrors, func(failure validator.FieldError) (string, string) {
+				return failure.Namespace(), failure.Tag()
+			})
 
 			require.Equal(t, test.wantValidation, got)
 		})
@@ -1099,10 +1098,9 @@ func TestLoadRejectsInvalidLoggerConfiguration(t *testing.T) {
 
 			require.ErrorAs(t, err, &validationErrors)
 
-			got := make(map[string]string, len(validationErrors))
-			for _, failure := range validationErrors {
-				got[failure.Namespace()] = failure.Tag()
-			}
+			got := lo.Associate(validationErrors, func(failure validator.FieldError) (string, string) {
+				return failure.Namespace(), failure.Tag()
+			})
 
 			require.Equal(t, test.wantValidation, got)
 		})

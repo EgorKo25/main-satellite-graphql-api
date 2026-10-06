@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
+	"github.com/samber/lo"
 	"github.com/spf13/afero"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -177,11 +178,7 @@ func newCore(filesystem afero.Fs, cfg config.LoggerCore) (zapcore.Core, func() e
 }
 
 func zapFields(attrs []Attr) []zap.Field {
-	fields := make([]zap.Field, len(attrs))
-
-	for index, attr := range attrs {
-		fields[index] = attr.field
-	}
-
-	return fields
+	return lo.Map(attrs, func(attr Attr, _ int) zap.Field {
+		return attr.field
+	})
 }

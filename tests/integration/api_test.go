@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/samber/lo"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 )
@@ -426,6 +427,9 @@ func TestReadAndPagination(t *testing.T) {
 		testFixture.create(t, chairBranch, chairBranch, object{typeField: chairABC}),
 	}
 	ids := []string{idOf(t, created[0]), idOf(t, created[1]), idOf(t, created[2])}
+	expectedByID := lo.KeyBy(created, func(main object) string {
+		return idOf(t, main)
+	})
 
 	cases := []struct {
 		name string
@@ -450,12 +454,9 @@ func TestReadAndPagination(t *testing.T) {
 				main, validType := row.(object)
 				require.True(t, validType, "list item must be an object: %v", row)
 
-				got = append(got, idOf(t, main))
-				for _, original := range created {
-					if idOf(t, original) == idOf(t, main) {
-						require.Equal(t, original, main)
-					}
-				}
+				mainID := idOf(t, main)
+				got = append(got, mainID)
+				require.Equal(t, expectedByID[mainID], main)
 			}
 
 			require.Equal(t, testCase.want, got)
