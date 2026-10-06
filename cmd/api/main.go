@@ -33,7 +33,8 @@ func main() {
 	database, err := postgres.New(ctx, cfg.Database)
 	if err != nil {
 		log.Error("initialize database", err)
-		panic(err)
+
+		return
 	}
 	defer database.Close()
 
@@ -42,6 +43,7 @@ func main() {
 
 	if err = httpServer.Serve(ctx); err != nil {
 		log.Error("HTTP server stopped", err)
-		panic(err)
+
+		return
 	}
 }
