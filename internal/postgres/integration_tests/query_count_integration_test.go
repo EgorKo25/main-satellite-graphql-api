@@ -4,58 +4,37 @@ package integrationtests_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph"
-	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
 
-type traceCounter struct {
-	queries atomic.Int64
-}
-
-func (counter *traceCounter) TraceQueryStart(
-	ctx context.Context,
-	_ *pgx.Conn,
-	_ pgx.TraceQueryStartData,
-) context.Context {
-	counter.queries.Add(1)
-
-	return ctx
-}
-
-func (*traceCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
-
 func TestListQueryCount(t *testing.T) {
 	t.Parallel()
-
-	database, inspection := setupDatabase(t)
-	for range 25 {
-		_, err := database.Create(t.Context(), "bulk", map[string]any{toolName: map[string]any{}})
-		require.NoError(t, err)
-	}
 
 	for _, limit := range []int{1, 20} {
 		t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
 			t.Parallel()
 
-			var trace traceCounter
+			database, inspection := setupDatabase(t)
+			for range 25 {
+				_, err := database.Create(t.Context(), "bulk", map[string]any{toolName: map[string]any{}})
+				require.NoError(t, err)
+			}
 
-			poolConfig := inspection.Config()
-			poolConfig.ConnConfig.Tracer = &trace
-			pool, err := pgxpool.NewWithConfig(t.Context(), poolConfig)
+			connection, err := inspection.Acquire(t.Context())
 			require.NoError(t, err)
-			t.Cleanup(pool.Close)
-			require.NoError(t, pool.Ping(t.Context()))
+			t.Cleanup(connection.Release)
+
+			_, err = connection.Exec(t.Context(), "CREATE EXTENSION pg_stat_statements;")
+			require.NoError(t, err)
+			_, err = connection.Exec(t.Context(), "SET pg_stat_statements.track = 'none';")
+			require.NoError(t, err)
 
 			body, err := json.Marshal(map[string]any{
 				"query": `query($limit:Int!) { main(limit:$limit) { id title createdAt updatedAt deletedAt satellite {
@@ -72,13 +51,25 @@ func TestListQueryCount(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 
 			recorder := httptest.NewRecorder()
-			reader := postgres.NewReadDBForTest(pool)
-			handler := graph.NewHandler(reader, database)
+			handler := graph.NewHandler(database, database)
 
-			trace.queries.Store(0)
+			var callsBefore, callsAfter int64
+
+			err = connection.QueryRow(t.Context(), `
+				SELECT coalesce(sum(calls), 0)::bigint
+				FROM pg_stat_statements
+				WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+			`).Scan(&callsBefore)
+			require.NoError(t, err)
+
 			handler.ServeHTTP(recorder, request)
 
-			queryCount := trace.queries.Load()
+			err = connection.QueryRow(t.Context(), `
+				SELECT coalesce(sum(calls), 0)::bigint
+				FROM pg_stat_statements
+				WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+			`).Scan(&callsAfter)
+			require.NoError(t, err)
 
 			var response struct {
 				Data struct {
@@ -91,7 +82,7 @@ func TestListQueryCount(t *testing.T) {
 			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 			require.Empty(t, response.Errors)
 			require.Len(t, response.Data.Main, limit)
-			require.Equal(t, int64(1), queryCount)
+			require.Equal(t, int64(1), callsAfter-callsBefore)
 		})
 	}
 }

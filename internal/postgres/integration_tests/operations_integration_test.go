@@ -64,12 +64,14 @@ func TestSatelliteLifecycle(t *testing.T) {
 			ctx := t.Context()
 			created, err := database.Create(ctx, initialTitle, test.create)
 			require.NoError(t, err)
+
+			createdSatellite := satelliteMetadata(t, created.Satellite)
 			require.Positive(t, created.ID)
 			require.Equal(t, test.kind, created.SubObj)
 			require.Equal(t, test.kind, created.Satellite.Kind())
-			require.Equal(t, created.SubID, created.Satellite.Metadata().ID)
-			require.Equal(t, created.ID, created.Satellite.Metadata().MainID)
-			require.Equal(t, created.CreatedAt, created.Satellite.Metadata().CreatedAt)
+			require.Equal(t, created.SubID, createdSatellite.ID)
+			require.Equal(t, created.ID, createdSatellite.MainID)
+			require.Equal(t, created.CreatedAt, createdSatellite.CreatedAt)
 
 			var (
 				storedID, storedMainID int64
@@ -96,13 +98,13 @@ func TestSatelliteLifecycle(t *testing.T) {
 				graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: new("first")}}))
 			require.NoError(t, err)
 
-			beforeTitleUpdate := updated.Satellite.Metadata().UpdatedAt
+			beforeTitleUpdate := satelliteMetadata(t, updated.Satellite).UpdatedAt
 			updated, err = database.Update(ctx, created.ID, graphql.OmittableOf(new(changedTitle)),
 				graphql.Omittable[map[string]any]{})
 			require.NoError(t, err)
 			require.Equal(t, changedTitle, updated.Title)
 			require.Equal(t, created.CreatedAt, updated.CreatedAt)
-			require.Equal(t, beforeTitleUpdate, updated.Satellite.Metadata().UpdatedAt)
+			require.Equal(t, beforeTitleUpdate, satelliteMetadata(t, updated.Satellite).UpdatedAt)
 
 			err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE main_id = $1`,
 				pgx.Identifier{test.description}.Sanitize(), pgx.Identifier{string(test.kind)}.Sanitize()),
@@ -114,11 +116,13 @@ func TestSatelliteLifecycle(t *testing.T) {
 				updated, err = database.Update(ctx, created.ID, graphql.Omittable[*string]{},
 					graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: description}}))
 				require.NoError(t, err)
+
+				updatedSatellite := satelliteMetadata(t, updated.Satellite)
 				require.Equal(t, changedTitle, updated.Title)
 				require.Equal(t, created.CreatedAt, updated.CreatedAt)
-				require.Equal(t, created.Satellite.Metadata().CreatedAt, updated.Satellite.Metadata().CreatedAt)
+				require.Equal(t, createdSatellite.CreatedAt, updatedSatellite.CreatedAt)
 				require.True(t, updated.UpdatedAt.After(created.UpdatedAt))
-				require.Equal(t, updated.UpdatedAt, updated.Satellite.Metadata().UpdatedAt)
+				require.Equal(t, updated.UpdatedAt, updatedSatellite.UpdatedAt)
 
 				err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE main_id = $1`,
 					pgx.Identifier{test.description}.Sanitize(), pgx.Identifier{string(test.kind)}.Sanitize()),
@@ -154,6 +158,23 @@ WHERE m.id = $1`, pgx.Identifier{string(test.kind)}.Sanitize()), created.ID).
 			require.NoError(t, err)
 			require.Empty(t, listed)
 		})
+	}
+}
+
+func satelliteMetadata(t *testing.T, object domain.SubObject) *domain.Satellite {
+	t.Helper()
+
+	switch satellite := object.(type) {
+	case *domain.Tool:
+		return &satellite.Satellite
+	case *domain.Table:
+		return &satellite.Satellite
+	case *domain.Chair:
+		return &satellite.Satellite
+	default:
+		require.FailNowf(t, "unexpected satellite type", "%T", object)
+
+		return nil
 	}
 }
 
