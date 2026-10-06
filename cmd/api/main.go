@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/config"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph"
@@ -30,11 +26,13 @@ func main() {
 	}
 
 	log := logger.Get("main")
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer func() { _ = log.Close() }()
+
+	ctx := context.Background()
 
 	database, err := postgres.New(ctx, cfg.Database)
 	if err != nil {
-		stop()
+		//nolint:gocritic // Fatal intentionally skips deferred logger cleanup.
 		log.Fatal("initialize database", err)
 	}
 
@@ -44,14 +42,8 @@ func main() {
 	err = httpServer.Serve(ctx)
 
 	database.Close()
-	stop()
 
 	if err != nil {
 		log.Fatal("HTTP server stopped", err)
-	}
-
-	if err = log.Close(); err != nil {
-		fmt.Fprintln(os.Stderr, "close logger:", err)
-		os.Exit(1)
 	}
 }
