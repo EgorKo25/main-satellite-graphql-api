@@ -4,6 +4,7 @@ package integrationtests_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -141,8 +142,9 @@ func TestCanceledUpdateRollsBackWholeAggregate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, changedTitle, updated.Title)
 
-	chair, ok := updated.Satellite.(*domain.Chair)
-	require.True(t, ok)
+	var chair domain.Chair
+
+	require.NoError(t, json.Unmarshal(updated.SatelliteData, &chair))
 	require.Equal(t, domain.CDE, chair.Type)
 	require.Equal(t, new("retained"), chair.Description3)
 

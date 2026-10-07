@@ -31,6 +31,7 @@ func NewExecutableSchema(cfg Config) graphql.ExecutableSchema {
 type Config = graphql.Config[ResolverRoot, DirectiveRoot, ComplexityRoot]
 
 type ResolverRoot interface {
+	Main() MainResolver
 	Mutation() MutationResolver
 	Query() QueryResolver
 }
@@ -91,6 +92,9 @@ type ComplexityRoot struct {
 
 // region    ************************** generated!.gotpl **************************
 
+type MainResolver interface {
+	Satellite(ctx context.Context, obj *domain.Main) (domain.SubObject, error)
+}
 type MutationResolver interface {
 	Main(ctx context.Context, input model.MainMutationInput) (*model.MainMutationPayload, error)
 }
@@ -961,7 +965,7 @@ func (ec *executionContext) _Main_satellite(ctx context.Context, field graphql.C
 			return ec.fieldContext_Main_satellite(ctx, field)
 		},
 		func(ctx context.Context) (any, error) {
-			return obj.Satellite, nil
+			return ec.Resolvers.Main().Satellite(ctx, obj)
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v domain.SubObject) graphql.Marshaler {
@@ -972,7 +976,7 @@ func (ec *executionContext) _Main_satellite(ctx context.Context, field graphql.C
 	)
 }
 func (ec *executionContext) fieldContext_Main_satellite(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
-	return graphql.NewScalarFieldContext("Main", field, false, false, errors.New("field of type Satellite does not have child fields"))
+	return graphql.NewScalarFieldContext("Main", field, true, true, errors.New("field of type Satellite does not have child fields"))
 }
 
 func (ec *executionContext) _Main_createdAt(ctx context.Context, field graphql.CollectedField, obj *domain.Main) (ret graphql.Marshaler) {
@@ -3111,32 +3115,65 @@ func (ec *executionContext) _Main(ctx context.Context, sel ast.SelectionSet, obj
 		case "id":
 			out.Values[i] = ec._Main_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "title":
 			out.Values[i] = ec._Main_title(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "satellite":
-			out.Values[i] = ec._Main_satellite(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Main_satellite(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "createdAt":
 			out.Values[i] = ec._Main_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "updatedAt":
 			out.Values[i] = ec._Main_updatedAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "deletedAt":
 			out.Values[i] = ec._Main_deletedAt(ctx, field, obj)
 			if out.Values[i] == graphql.RequiredNull {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))

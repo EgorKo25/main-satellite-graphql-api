@@ -22,17 +22,16 @@ func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error)
 	    )
 	    SELECT
 	        m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
-	        s.kind, s.id, s.main_id, s.created_at, s.update_at, s.deleted_at, s.description, s.chair_type
+	        COALESCE(s.kind = m.sub_obj AND s.id = m.sub_id AND s.deleted_at IS NULL, false), s.data
 	    FROM page m
 	    LEFT JOIN LATERAL (
-	        SELECT 'tools' AS kind, id, main_id, created_at, update_at, deleted_at,
-	               description1 AS description, NULL::text AS chair_type
+	        SELECT 'tools' AS kind, id, deleted_at, row_to_json(tools) AS data
 	        FROM tools WHERE main_id = m.id
 	        UNION ALL
-	        SELECT 'tables', id, main_id, created_at, update_at, deleted_at, description2, NULL::text
+	        SELECT 'tables', id, deleted_at, row_to_json(tables)
 	        FROM tables WHERE main_id = m.id
 	        UNION ALL
-	        SELECT 'chairs', id, main_id, created_at, update_at, deleted_at, description3, type::text
+	        SELECT 'chairs', id, deleted_at, row_to_json(chairs)
 	        FROM chairs WHERE main_id = m.id
 	    ) s ON true
 	    ORDER BY m.id ASC;
