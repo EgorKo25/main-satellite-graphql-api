@@ -973,6 +973,7 @@ func TestBrokenRelationshipsFailReadAndWrite(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			for _, operation := range []struct{ name, query string }{
 				{"read", read},
+				{"read_without_satellite", `query($id:ID!) { main(id:$id) { id title } }`},
 				{"update_title", `mutation($id:ID!) {
  main(input:{update:{id:$id,title:"must rollback"}}){main{id} deletedId}
 }`},

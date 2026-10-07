@@ -8,6 +8,12 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 )
 
+var satelliteTypes = map[domain.Kind]func() domain.SubObject{
+	domain.Tools:  func() domain.SubObject { return new(domain.Tool) },
+	domain.Tables: func() domain.SubObject { return new(domain.Table) },
+	domain.Chairs: func() domain.SubObject { return new(domain.Chair) },
+}
+
 //go:generate go tool mockgen -destination=reader_mock_test.go -package=graph -mock_names=mainReader=MockMainReader . mainReader
 type mainReader interface {
 	List(context.Context, postgres.ListInput) ([]*domain.Main, error)

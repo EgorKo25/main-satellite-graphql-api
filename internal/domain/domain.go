@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Kind string
 
@@ -18,14 +21,14 @@ const (
 )
 
 type Main struct {
-	ID        int64
-	Title     string
-	SubID     int64
-	SubObj    Kind
-	Satellite SubObject `db:"-"`
-	CreatedAt time.Time
-	UpdatedAt time.Time `db:"update_at"`
-	DeletedAt *time.Time
+	ID            int64
+	Title         string
+	SubID         int64
+	SubObj        Kind
+	SatelliteData json.RawMessage `db:"-"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time `db:"update_at"`
+	DeletedAt     *time.Time
 }
 
 type SubObject interface {
@@ -33,17 +36,17 @@ type SubObject interface {
 }
 
 type Satellite struct {
-	ID        int64
-	MainID    int64
-	CreatedAt time.Time
-	UpdatedAt time.Time `db:"update_at"`
-	DeletedAt *time.Time
+	ID        int64      `json:"id"`
+	MainID    int64      `json:"main_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"update_at"`
+	DeletedAt *time.Time `json:"deleted_at"`
 }
 
 type Tool struct {
 	Satellite
 
-	Description1 *string
+	Description1 *string `json:"description1"`
 }
 
 func (*Tool) Kind() Kind { return Tools }
@@ -51,7 +54,7 @@ func (*Tool) Kind() Kind { return Tools }
 type Table struct {
 	Satellite
 
-	Description2 *string
+	Description2 *string `json:"description2"`
 }
 
 func (*Table) Kind() Kind { return Tables }
@@ -59,8 +62,8 @@ func (*Table) Kind() Kind { return Tables }
 type Chair struct {
 	Satellite
 
-	Description3 *string
-	Type         ChairType
+	Description3 *string   `json:"description3"`
+	Type         ChairType `json:"type"`
 }
 
 func (*Chair) Kind() Kind { return Chairs }

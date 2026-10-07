@@ -27,13 +27,16 @@ const (
 	tableBranch      = "table"
 	chairBranch      = "chair"
 	toolDescription  = "description1"
+	tableDescription = "description2"
 	chairDescription = "description3"
 	chairTypeField   = "type"
 	testLogLevel     = "info"
 	testLogEncoding  = "json"
 )
 
-func sampleMain(kind domain.Kind) *domain.Main {
+func sampleMain(t *testing.T, kind domain.Kind) *domain.Main {
+	t.Helper()
+
 	timestamp := time.Date(2026, 9, 15, 13, 42, 10, 123000, time.FixedZone("MSK", 3*60*60))
 	common := domain.Satellite{
 		ID: 2, MainID: 9223372036854775807, CreatedAt: timestamp, UpdatedAt: timestamp,
@@ -50,8 +53,11 @@ func sampleMain(kind domain.Kind) *domain.Main {
 		satellite = &domain.Chair{Satellite: common, Type: domain.ABC}
 	}
 
+	data, err := json.Marshal(satellite)
+	require.NoError(t, err)
+
 	return &domain.Main{ID: 9223372036854775807, Title: "sample", SubID: 2, SubObj: kind,
-		CreatedAt: timestamp, UpdatedAt: timestamp, Satellite: satellite}
+		CreatedAt: timestamp, UpdatedAt: timestamp, SatelliteData: data}
 }
 
 type httpResult struct {
@@ -218,7 +224,7 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 			expect: func(writer *MockMainWriter) {
 				writer.EXPECT().
 					Create(gomock.Any(), "", map[string]any{toolBranch: map[string]any{}}).
-					Return(sampleMain(domain.Tools), nil)
+					Return(sampleMain(t, domain.Tools), nil)
 			},
 		},
 		{
@@ -228,7 +234,7 @@ func TestOneOfDirectBranchVariables(t *testing.T) {
 				satellite := map[string]any{toolBranch: map[string]any{toolDescription: (*string)(nil)}}
 				writer.EXPECT().
 					Update(gomock.Any(), int64(1), graphql.Omittable[*string]{}, graphql.OmittableOf(satellite)).
-					Return(sampleMain(domain.Tools), nil)
+					Return(sampleMain(t, domain.Tools), nil)
 			},
 		},
 	}
@@ -289,7 +295,7 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 		kind        domain.Kind
 	}{
 		{name: toolBranch, field: toolDescription, kind: domain.Tools},
-		{name: tableBranch, field: "description2", kind: domain.Tables},
+		{name: tableBranch, field: tableDescription, kind: domain.Tables},
 		{name: chairBranch, field: chairDescription, kind: domain.Chairs},
 	}
 
@@ -311,7 +317,7 @@ func TestInputMappingPreservesPatchStates(t *testing.T) {
 				satellite := map[string]any{branch.name: map[string]any{branch.field: value.value}}
 				writer.EXPECT().
 					Update(gomock.Any(), int64(1), graphql.Omittable[*string]{}, graphql.OmittableOf(satellite)).
-					Return(sampleMain(branch.kind), nil)
+					Return(sampleMain(t, branch.kind), nil)
 				result := requestGraphQL(t, NewHandler(reader, writer),
 					"mutation($input:MainMutationInput!){main(input:$input){main{id}}}",
 					map[string]any{"input": map[string]any{"update": map[string]any{
@@ -337,7 +343,7 @@ func TestTitleOnlyBinding(t *testing.T) {
 			writer := NewMockMainWriter(controller)
 			writer.EXPECT().
 				Update(gomock.Any(), int64(1), graphql.OmittableOf(&title), graphql.Omittable[map[string]any]{}).
-				Return(sampleMain(domain.Tools), nil)
+				Return(sampleMain(t, domain.Tools), nil)
 			result := requestGraphQL(t, NewHandler(reader, writer),
 				"mutation($title:String){main(input:{update:{id:1,title:$title}}){main{id}}}",
 				map[string]any{"title": title})
@@ -369,7 +375,7 @@ func TestPatchVariablePresence(t *testing.T) {
 			satellite := map[string]any{chairBranch: test.patch}
 			writer.EXPECT().
 				Update(gomock.Any(), int64(1), graphql.Omittable[*string]{}, graphql.OmittableOf(satellite)).
-				Return(sampleMain(domain.Chairs), nil)
+				Return(sampleMain(t, domain.Chairs), nil)
 			result := requestGraphQL(t, NewHandler(reader, writer),
 				`mutation($description:String){
 				main(input:{update:{id:1,satellite:{chair:{type:cde,description3:$description}}}}){main{id}}
@@ -700,7 +706,7 @@ func TestCreateInputAndOutput(t *testing.T) {
 	}{
 		{kind: toolBranch, typename: "Tool", contents: "{}", fragment: toolDescription,
 			input: map[string]any{}},
-		{kind: tableBranch, typename: "Table", contents: "{}", fragment: "description2",
+		{kind: tableBranch, typename: "Table", contents: "{}", fragment: tableDescription,
 			input: map[string]any{}},
 		{kind: chairBranch, typename: "Chair", contents: "{type:abc}", fragment: "description3 type",
 			input: map[string]any{chairTypeField: domain.ABC}},
@@ -716,7 +722,7 @@ func TestCreateInputAndOutput(t *testing.T) {
 				tableBranch: domain.Tables,
 				chairBranch: domain.Chairs,
 			}[test.kind]
-			value := sampleMain(kind)
+			value := sampleMain(t, kind)
 			writer.EXPECT().Create(gomock.Any(), "", map[string]any{test.kind: test.input}).Return(value, nil)
 
 			result := requestGraphQL(

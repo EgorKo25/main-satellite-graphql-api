@@ -4,6 +4,7 @@ package integrationtests_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -65,13 +66,12 @@ func TestSatelliteLifecycle(t *testing.T) {
 			created, err := database.Create(ctx, initialTitle, test.create)
 			require.NoError(t, err)
 
-			createdSatellite := satelliteMetadata(t, created.Satellite)
+			createdSatellite := satelliteMetadata(t, created.SatelliteData)
 			require.Positive(t, created.ID)
 			require.Equal(t, test.kind, created.SubObj)
-			require.Equal(t, test.kind, created.Satellite.Kind())
 			require.Equal(t, created.SubID, createdSatellite.ID)
 			require.Equal(t, created.ID, createdSatellite.MainID)
-			require.Equal(t, created.CreatedAt, createdSatellite.CreatedAt)
+			require.WithinDuration(t, created.CreatedAt, createdSatellite.CreatedAt, 0)
 
 			var (
 				storedID, storedMainID int64
@@ -98,13 +98,13 @@ func TestSatelliteLifecycle(t *testing.T) {
 				graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: new("first")}}))
 			require.NoError(t, err)
 
-			beforeTitleUpdate := satelliteMetadata(t, updated.Satellite).UpdatedAt
+			beforeTitleUpdate := satelliteMetadata(t, updated.SatelliteData).UpdatedAt
 			updated, err = database.Update(ctx, created.ID, graphql.OmittableOf(new(changedTitle)),
 				graphql.Omittable[map[string]any]{})
 			require.NoError(t, err)
 			require.Equal(t, changedTitle, updated.Title)
 			require.Equal(t, created.CreatedAt, updated.CreatedAt)
-			require.Equal(t, beforeTitleUpdate, satelliteMetadata(t, updated.Satellite).UpdatedAt)
+			require.Equal(t, beforeTitleUpdate, satelliteMetadata(t, updated.SatelliteData).UpdatedAt)
 
 			err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE main_id = $1`,
 				pgx.Identifier{test.description}.Sanitize(), pgx.Identifier{string(test.kind)}.Sanitize()),
@@ -117,12 +117,12 @@ func TestSatelliteLifecycle(t *testing.T) {
 					graphql.OmittableOf(map[string]any{test.name: map[string]any{test.description: description}}))
 				require.NoError(t, err)
 
-				updatedSatellite := satelliteMetadata(t, updated.Satellite)
+				updatedSatellite := satelliteMetadata(t, updated.SatelliteData)
 				require.Equal(t, changedTitle, updated.Title)
 				require.Equal(t, created.CreatedAt, updated.CreatedAt)
 				require.Equal(t, createdSatellite.CreatedAt, updatedSatellite.CreatedAt)
 				require.True(t, updated.UpdatedAt.After(created.UpdatedAt))
-				require.Equal(t, updated.UpdatedAt, updatedSatellite.UpdatedAt)
+				require.WithinDuration(t, updated.UpdatedAt, updatedSatellite.UpdatedAt, 0)
 
 				err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE main_id = $1`,
 					pgx.Identifier{test.description}.Sanitize(), pgx.Identifier{string(test.kind)}.Sanitize()),
@@ -161,21 +161,14 @@ WHERE m.id = $1`, pgx.Identifier{string(test.kind)}.Sanitize()), created.ID).
 	}
 }
 
-func satelliteMetadata(t *testing.T, object domain.SubObject) *domain.Satellite {
+func satelliteMetadata(t *testing.T, data json.RawMessage) *domain.Satellite {
 	t.Helper()
 
-	switch satellite := object.(type) {
-	case *domain.Tool:
-		return &satellite.Satellite
-	case *domain.Table:
-		return &satellite.Satellite
-	case *domain.Chair:
-		return &satellite.Satellite
-	default:
-		require.FailNowf(t, "unexpected satellite type", "%T", object)
+	var satellite domain.Satellite
 
-		return nil
-	}
+	require.NoError(t, json.Unmarshal(data, &satellite))
+
+	return &satellite
 }
 
 func TestChairTypeOnlyUpdate(t *testing.T) {
@@ -273,8 +266,9 @@ func TestWritePreservesInputMaps(t *testing.T) {
 	require.Equal(t, wantCreate, create)
 	require.Equal(t, changedTitle, updated.Title)
 
-	chair, ok := updated.Satellite.(*domain.Chair)
-	require.True(t, ok)
+	var chair domain.Chair
+
+	require.NoError(t, json.Unmarshal(updated.SatelliteData, &chair))
 	require.Nil(t, chair.Description3)
 	require.Equal(t, domain.CDE, chair.Type)
 }
