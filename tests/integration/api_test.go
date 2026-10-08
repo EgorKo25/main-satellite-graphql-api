@@ -954,7 +954,7 @@ func TestGraphQLSchema(t *testing.T) {
 	}
 }
 
-func TestBrokenRelationshipsFailReadAndWrite(t *testing.T) {
+func TestBrokenRelationshipsRejectedByDatabase(t *testing.T) {
 	for _, testCase := range []struct{ name, sql string }{
 		{"incorrect_sub_id", "UPDATE main SET sub_id=sub_id+1000 WHERE id=$1"},
 		{"missing_satellite", "DELETE FROM tools WHERE main_id=$1"},
@@ -971,29 +971,18 @@ func TestBrokenRelationshipsFailReadAndWrite(t *testing.T) {
 		{"extra_deleted_satellite", "INSERT INTO tables(main_id,deleted_at) VALUES($1,clock_timestamp())"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			for _, operation := range []struct{ name, query string }{
-				{"read", read},
-				{"read_without_satellite", `query($id:ID!) { main(id:$id) { id title } }`},
-				{"update_title", `mutation($id:ID!) {
- main(input:{update:{id:$id,title:"must rollback"}}){main{id} deletedId}
-}`},
-				{"update_satellite", `mutation($id:ID!) {
- main(input:{update:{id:$id,title:"must rollback",satellite:{tool:{description1:"changed"}}}}){main{id} deletedId}
-}`},
-				{deleteOperation, `mutation($id:ID!) { main(input:{delete:{id:$id}}){main{id} deletedId} }`},
-			} {
-				t.Run(operation.name, func(t *testing.T) {
-					testFixture := setup(t)
-					main := testFixture.create(t, toolBranch, "broken", object{})
-					testFixture.exec(t, testCase.sql, idOf(t, main))
-					before := testFixture.snapshot(t)
-					result := testFixture.gql(t, operation.query, object{"id": idOf(t, main)})
-					require.Len(t, result.Errors, 1)
-					require.Equal(t, "INTERNAL_SERVER_ERROR", result.Errors[0].Extensions["code"])
-					require.Nil(t, result.Data[mainField])
-					require.JSONEq(t, before, testFixture.snapshot(t))
-				})
-			}
+			testFixture := setup(t)
+			main := testFixture.create(t, toolBranch, "consistent", object{})
+			before := testFixture.snapshot(t)
+			_, err := testFixture.pool.Exec(t.Context(), testCase.sql, idOf(t, main))
+
+			var constraintError *pgconn.PgError
+
+			require.ErrorAs(t, err, &constraintError)
+			require.Equal(t, "23514", constraintError.Code)
+			require.Equal(t, "main_satellite_integrity", constraintError.ConstraintName)
+			require.JSONEq(t, before, testFixture.snapshot(t))
+			require.Len(t, testFixture.list(t, object{"id": idOf(t, main)}), 1)
 		})
 	}
 }
@@ -1330,6 +1319,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	testFixture := setup(t)
 	ctx := t.Context()
 	require.NoError(t, goose.UpContext(ctx, testFixture.database, migrationsDir), "repeat up")
+	require.NoError(t, goose.DownContext(ctx, testFixture.database, migrationsDir))
 	require.NoError(t, goose.DownContext(ctx, testFixture.database, migrationsDir))
 
 	var table *string

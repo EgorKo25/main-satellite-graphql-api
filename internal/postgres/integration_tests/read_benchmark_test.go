@@ -4,6 +4,7 @@ package integrationtests_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +25,16 @@ func seedReadDatabase(tb testing.TB, pool *pgxpool.Pool, count, descriptionSize 
 	ctx, cancel := context.WithTimeout(tb.Context(), 5*time.Minute)
 	defer cancel()
 
-	_, err := pool.Exec(ctx, `
+	transaction, err := pool.Begin(ctx)
+	require.NoError(tb, err)
+
+	defer func() {
+		if rollbackErr := transaction.Rollback(ctx); !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			require.NoError(tb, rollbackErr)
+		}
+	}()
+
+	_, err = transaction.Exec(ctx, `
 	    INSERT INTO main (id, title, sub_id, sub_obj, created_at, update_at)
 	    SELECT id, 'main-' || id, id + $1, (ARRAY['tools','tables','chairs'])[1 + (id - 1) % 3],
 	        '2026-09-01 12:34:56.123456+00', '2026-09-02 12:34:56.654321+00'
@@ -41,7 +52,7 @@ func seedReadDatabase(tb testing.TB, pool *pgxpool.Pool, count, descriptionSize 
 		{table: "tables", description: "description2"},
 		{table: "chairs", description: "description3", extraColumn: ", type", extraValue: ", 'abc'"},
 	} {
-		_, err = pool.Exec(ctx, fmt.Sprintf(`
+		_, err = transaction.Exec(ctx, fmt.Sprintf(`
 		    INSERT INTO %s (id, main_id, %s, created_at, update_at%s)
 		    SELECT sub_id, id, CASE id %% 5 WHEN 1 THEN NULL WHEN 2 THEN '' ELSE repeat('x', $1) END,
 		        created_at, update_at%s
@@ -49,6 +60,8 @@ func seedReadDatabase(tb testing.TB, pool *pgxpool.Pool, count, descriptionSize 
 		`, variant.table, variant.description, variant.extraColumn, variant.extraValue), descriptionSize, variant.table)
 		require.NoError(tb, err)
 	}
+
+	require.NoError(tb, transaction.Commit(ctx))
 
 	_, err = pool.Exec(ctx, "ANALYZE main; ANALYZE tools; ANALYZE tables; ANALYZE chairs;")
 	require.NoError(tb, err)
@@ -142,7 +155,7 @@ func TestReadPaths(t *testing.T) {
 	}
 }
 
-func TestReadPathsBrokenRelation(t *testing.T) {
+func TestReadPathsRejectBrokenRelation(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -161,18 +174,25 @@ func TestReadPathsBrokenRelation(t *testing.T) {
 			database, pool := setupDatabase(t)
 			seedReadDatabase(t, pool, 9, 32)
 			_, err := pool.Exec(t.Context(), test.sql)
-			require.NoError(t, err)
+
+			var constraintError *pgconn.PgError
+
+			require.ErrorAs(t, err, &constraintError)
+			require.Equal(t, "23514", constraintError.Code)
+			require.Equal(t, "main_satellite_integrity", constraintError.ConstraintName)
 
 			for _, path := range readPaths() {
 				rows, queryErr := pool.Query(t.Context(), path.query, nil, 9, 0)
 				require.NoError(t, queryErr)
 
-				_, queryErr = pgx.CollectRows(rows, path.scan)
-				require.Error(t, queryErr, path.name)
+				result, queryErr := pgx.CollectRows(rows, path.scan)
+				require.NoError(t, queryErr, path.name)
+				require.Len(t, result, 9)
 			}
 
-			_, err = database.List(t.Context(), postgres.ListInput{Limit: 9})
-			require.Error(t, err)
+			items, err := database.List(t.Context(), postgres.ListInput{Limit: 9})
+			require.NoError(t, err)
+			require.Len(t, items, 9)
 		})
 	}
 }
