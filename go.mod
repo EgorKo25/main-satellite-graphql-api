@@ -9,12 +9,14 @@ require (
 	github.com/go-playground/validator/v10 v10.30.4
 	github.com/google/go-cmp v0.7.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/mailru/easyjson v0.9.2
 	github.com/moby/moby/api v1.55.0
 	github.com/ory/dockertest/v4 v4.0.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/samber/lo v1.53.0
 	github.com/spf13/afero v1.15.0
 	github.com/stretchr/testify v1.12.1
+	github.com/valyala/fastjson v1.6.10
 	github.com/vektah/gqlparser/v2 v2.5.37
 	go.uber.org/mock v0.6.0
 	go.uber.org/zap v1.28.0
@@ -45,6 +47,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/josharian/intern v1.0.0 // indirect
 	github.com/lann/builder v0.0.0-20180802200727-47ae307949d0 // indirect
 	github.com/lann/ps v0.0.0-20150810152359-62de8c46ede0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
@@ -72,5 +75,6 @@ require (
 
 tool (
 	github.com/99designs/gqlgen
+	github.com/mailru/easyjson/easyjson
 	go.uber.org/mock/mockgen
 )

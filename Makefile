@@ -1,4 +1,4 @@
-.PHONY: build run generate test test-race test-integration test-docker vet lint fmt migrate-up migrate-down migrate-status up down
+.PHONY: build run generate test test-race test-integration test-docker bench vet lint fmt migrate-up migrate-down migrate-status up down
 
 build:
 	go build -o bin/api ./cmd/api
@@ -20,6 +20,9 @@ test-integration:
 
 test-docker:
 	docker compose --profile test run --build --rm test
+
+bench:
+	go test ./internal/graph/benchmarks -run='^$$' -bench='Benchmark(Factory|Decode)' -benchmem -benchtime=200ms -count=10 -cpu=1
 
 vet:
 	go vet ./...
