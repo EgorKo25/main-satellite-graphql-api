@@ -1,0 +1,441 @@
+//go:build integration
+
+package integrationtests_test
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+	"github.com/stretchr/testify/require"
+)
+
+func originalSchemaPool(t testing.TB) *pgxpool.Pool {
+	t.Helper()
+	_, pool := setupDatabase(t)
+	migrationDB := stdlib.OpenDB(*pool.Config().ConnConfig)
+	t.Cleanup(func() { require.NoError(t, migrationDB.Close()) })
+	migrations, err := goose.NewProvider(goose.DialectPostgres, migrationDB, os.DirFS("../../../migrations"))
+	require.NoError(t, err)
+	_, err = migrations.Down(t.Context())
+	require.NoError(t, err)
+	version, err := migrations.GetDBVersion(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), version)
+	return pool
+}
+
+func TestExplainAnalysis(t *testing.T) {
+	source, err := os.ReadFile("../../../docs/analysis/2026-10-08-postgres/current.sql")
+	require.NoError(t, err)
+	current := string(source)
+	require.NotEmpty(t, current)
+	joins := `
+	    WITH page AS (
+	        SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
+	        FROM main
+	        WHERE deleted_at IS NULL AND ($1::bigint IS NULL OR id = $1)
+	        ORDER BY id ASC LIMIT $2 OFFSET $3
+	    )
+	    SELECT m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
+	        COALESCE(
+	            (t.id IS NOT NULL)::int + (b.id IS NOT NULL)::int + (c.id IS NOT NULL)::int = 1
+	            AND CASE m.sub_obj
+	                WHEN 'tools' THEN t.id = m.sub_id AND t.deleted_at IS NULL
+	                WHEN 'tables' THEN b.id = m.sub_id AND b.deleted_at IS NULL
+	                WHEN 'chairs' THEN c.id = m.sub_id AND c.deleted_at IS NULL
+	            END, false) AS valid,
+	        COALESCE(t.id,b.id,c.id) AS satellite_id,
+	        COALESCE(t.main_id,b.main_id,c.main_id) AS satellite_main_id,
+	        COALESCE(t.created_at,b.created_at,c.created_at) AS satellite_created_at,
+	        COALESCE(t.update_at,b.update_at,c.update_at) AS satellite_updated_at,
+	        COALESCE(t.deleted_at,b.deleted_at,c.deleted_at) AS satellite_deleted_at,
+	        COALESCE(t.description1,b.description2,c.description3) AS description,
+	        c.type::text AS chair_type
+	    FROM page m
+	    LEFT JOIN tools t ON t.main_id = m.id
+	    LEFT JOIN tables b ON b.main_id = m.id
+	    LEFT JOIN chairs c ON c.main_id = m.id
+	    ORDER BY m.id ASC;
+	`
+	var records []map[string]any
+	for _, dataset := range []struct {
+		count   int
+		deleted bool
+	}{
+		{count: 100}, {count: 500_000}, {count: 1_000_000}, {count: 1_000_000, deleted: true},
+	} {
+		name := fmt.Sprintf("records_%d/deleted_%t", dataset.count, dataset.deleted)
+		t.Run(name, func(t *testing.T) {
+			pool := originalSchemaPool(t)
+			seedReadDatabase(t, pool, dataset.count, 32)
+			connection, err := pool.Acquire(t.Context())
+			require.NoError(t, err)
+			defer connection.Release()
+			active := dataset.count
+			if dataset.deleted {
+				for _, table := range []string{"main", "tools", "tables", "chairs"} {
+					column := "main_id"
+					if table == "main" {
+						column = "id"
+					}
+					_, err = connection.Exec(t.Context(), "UPDATE "+table+
+						" SET deleted_at = '2026-10-01', update_at = '2026-10-01' WHERE "+column+" % 10 <> 0")
+					require.NoError(t, err)
+					_, err = connection.Exec(t.Context(), "VACUUM (ANALYZE) "+table)
+					require.NoError(t, err)
+				}
+				active /= 10
+			}
+			var version string
+			err = connection.QueryRow(t.Context(), "SELECT version()").Scan(&version)
+			require.NoError(t, err)
+			for _, page := range []struct {
+				name   string
+				id     any
+				limit  int
+				offset int
+			}{
+				{name: "first20", limit: 20},
+				{name: "first100", limit: 100},
+				{name: "last100", limit: 100, offset: active - 100},
+				{name: "id_last", id: int64(dataset.count), limit: 100},
+				{name: "id_missing", id: int64(dataset.count + 1), limit: 100},
+			} {
+				idSQL := "NULL"
+				if page.id != nil {
+					idSQL = fmt.Sprint(page.id)
+				}
+				var baseline []map[string]any
+				for _, variant := range []struct {
+					name  string
+					query string
+					split bool
+				}{
+					{name: "current", query: current},
+					{name: "joins", query: joins},
+					{name: "current_split", query: current, split: true},
+					{name: "joins_split", query: joins, split: true},
+				} {
+					query := variant.query
+					if variant.split {
+						predicate := ""
+						if page.id != nil {
+							predicate = "AND id = $1"
+						}
+						query = strings.Replace(query, "AND ($1::bigint IS NULL OR id = $1)", predicate, 1)
+					}
+					_, err = connection.Exec(t.Context(), "PREPARE analysis_query(bigint, int, int) AS "+query)
+					require.NoError(t, err)
+					execute := fmt.Sprintf("EXECUTE analysis_query(%s, %d, %d)", idSQL, page.limit, page.offset)
+					rows, queryErr := connection.Query(t.Context(), execute)
+					require.NoError(t, queryErr)
+					values, queryErr := pgx.CollectRows(rows, pgx.RowToMap)
+					require.NoError(t, queryErr)
+					if variant.name == "current" {
+						baseline = values
+					} else {
+						require.Empty(t, cmp.Diff(baseline, values), page.name, variant.name)
+					}
+					for _, mode := range []string{"force_custom_plan", "force_generic_plan"} {
+						_, err = connection.Exec(t.Context(), "SET plan_cache_mode = "+mode)
+						require.NoError(t, err)
+						var (
+							raw          json.RawMessage
+							measurements []float64
+						)
+						for repeat := range 6 {
+							err = connection.QueryRow(t.Context(),
+								"EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SETTINGS, FORMAT JSON) "+execute).Scan(&raw)
+							require.NoError(t, err)
+							var decoded []struct {
+								ExecutionTime float64 `json:"Execution Time"`
+							}
+							require.NoError(t, json.Unmarshal(raw, &decoded))
+							if repeat > 0 {
+								measurements = append(measurements, decoded[0].ExecutionTime)
+							}
+						}
+						slices.Sort(measurements)
+						records = append(records, map[string]any{
+							"dataset": name, "postgres": version, "active": active, "page": page.name,
+							"variant": variant.name, "mode": mode, "median_ms": measurements[2],
+							"execution_ms": measurements, "plan": raw,
+						})
+						t.Logf("PLAN %s %s %s %s median=%.3fms", name, page.name, variant.name, mode, measurements[2])
+					}
+					_, err = connection.Exec(t.Context(), "DEALLOCATE analysis_query")
+					require.NoError(t, err)
+				}
+			}
+			_, err = connection.Exec(t.Context(), "SET plan_cache_mode = auto")
+			require.NoError(t, err)
+			_, err = connection.Exec(t.Context(), "PREPARE auto_query(bigint, int, int) AS "+current)
+			require.NoError(t, err)
+			for range 12 {
+				rows, queryErr := connection.Query(t.Context(), fmt.Sprintf("EXECUTE auto_query(NULL, 100, %d)", active-100))
+				require.NoError(t, queryErr)
+				_, queryErr = pgx.CollectRows(rows, pgx.RowToMap)
+				require.NoError(t, queryErr)
+			}
+			var (
+				raw             json.RawMessage
+				generic, custom int64
+			)
+			err = connection.QueryRow(t.Context(), fmt.Sprintf(
+				"EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SETTINGS, FORMAT JSON) EXECUTE auto_query(%d, 100, 0)",
+				dataset.count)).Scan(&raw)
+			require.NoError(t, err)
+			err = connection.QueryRow(t.Context(),
+				"SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'auto_query'").Scan(&generic, &custom)
+			require.NoError(t, err)
+			records = append(records, map[string]any{
+				"dataset": name, "variant": "current_auto_after_deep_pages", "mode": "auto",
+				"page": "id_last", "generic_plans": generic, "custom_plans": custom, "plan": raw,
+			})
+			_, err = connection.Exec(t.Context(), "DEALLOCATE auto_query")
+			require.NoError(t, err)
+		})
+	}
+	encoded, err := json.MarshalIndent(records, "", "  ")
+	require.NoError(t, err)
+	root := filepath.Join("..", "..", "..", ".tmp", "explain-analysis")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plans.json"), encoded, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "current.sql"), []byte(current), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "joins.sql"), []byte(joins), 0600))
+}
+
+func TestExplainCacheModes(t *testing.T) {
+	root := filepath.Join("..", "..", "..", ".tmp", "explain-analysis")
+	source, err := os.ReadFile(filepath.Join(root, "current.sql"))
+	require.NoError(t, err)
+	query := string(source)
+	pool := originalSchemaPool(t)
+	seedReadDatabase(t, pool, 1_000_000, 32)
+	connection, err := pool.Acquire(t.Context())
+	require.NoError(t, err)
+	defer connection.Release()
+	var records []map[string]any
+	expected := map[string][]map[string]any{}
+	for _, variant := range []struct {
+		name       string
+		mode       pgx.QueryExecMode
+		split      bool
+		warmOffset int
+	}{
+		{name: "cache_statement_fresh", mode: pgx.QueryExecModeCacheStatement},
+		{name: "cache_describe_fresh", mode: pgx.QueryExecModeCacheDescribe},
+		{name: "cache_statement", mode: pgx.QueryExecModeCacheStatement, warmOffset: 999900},
+		{name: "cache_describe", mode: pgx.QueryExecModeCacheDescribe, warmOffset: 999900},
+		{name: "split_cache_statement", mode: pgx.QueryExecModeCacheStatement, split: true, warmOffset: 999900},
+	} {
+		require.NoError(t, connection.Conn().DeallocateAll(t.Context()))
+		for range 12 {
+			statement := query
+			args := []any{variant.mode, nil, 100, variant.warmOffset}
+			if variant.split {
+				statement = strings.Replace(statement, "AND ($1::bigint IS NULL OR id = $1)", "", 1)
+				statement = strings.ReplaceAll(strings.ReplaceAll(statement, "$2", "$1"), "$3", "$2")
+				args = []any{variant.mode, 100, variant.warmOffset}
+			}
+			rows, queryErr := connection.Query(t.Context(), statement, args...)
+			require.NoError(t, queryErr)
+			values, queryErr := pgx.CollectRows(rows, pgx.RowToMap)
+			require.NoError(t, queryErr)
+			require.Len(t, values, 100)
+		}
+		for _, page := range []struct {
+			name   string
+			id     any
+			limit  int
+			offset int
+		}{
+			{name: "first20", limit: 20}, {name: "first100", limit: 100},
+			{name: "last100", limit: 100, offset: 999900},
+			{name: "id_last", id: int64(1_000_000), limit: 100},
+			{name: "id_missing", id: int64(1_000_001), limit: 100},
+		} {
+			statement := query
+			args := []any{variant.mode, page.id, page.limit, page.offset}
+			if variant.split {
+				predicate := ""
+				if page.id != nil {
+					predicate = "AND id = $1"
+				}
+				statement = strings.Replace(statement, "AND ($1::bigint IS NULL OR id = $1)", predicate, 1)
+				if page.id == nil {
+					statement = strings.ReplaceAll(strings.ReplaceAll(statement, "$2", "$1"), "$3", "$2")
+					args = []any{variant.mode, page.limit, page.offset}
+				}
+			}
+			var times []float64
+			for repeat := range 11 {
+				start := time.Now()
+				rows, queryErr := connection.Query(t.Context(), statement, args...)
+				require.NoError(t, queryErr)
+				values, queryErr := pgx.CollectRows(rows, pgx.RowToMap)
+				elapsed := float64(time.Since(start)) / float64(time.Millisecond)
+				require.NoError(t, queryErr)
+				if repeat > 0 {
+					times = append(times, elapsed)
+				}
+				if want, exists := expected[page.name]; exists {
+					require.Empty(t, cmp.Diff(want, values))
+				} else {
+					expected[page.name] = values
+				}
+			}
+			var generic, custom int64
+			err = connection.QueryRow(t.Context(), `
+			    SELECT COALESCE(sum(generic_plans),0)::bigint, COALESCE(sum(custom_plans),0)::bigint
+			    FROM pg_prepared_statements WHERE statement = $1;
+			`, pgx.QueryExecModeExec, statement).Scan(&generic, &custom)
+			require.NoError(t, err)
+			slices.Sort(times)
+			median := (times[4] + times[5]) / 2
+			records = append(records, map[string]any{
+				"variant": variant.name, "page": page.name, "wall_ms": times, "median_ms": median,
+				"generic_plans": generic, "custom_plans": custom,
+			})
+			t.Logf("PGX %s %s median=%.3fms generic=%d custom=%d", variant.name, page.name, median, generic, custom)
+		}
+	}
+	encoded, err := json.MarshalIndent(records, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cache-modes.json"), encoded, 0600))
+}
+
+func TestExplainAlternativeIntegrity(t *testing.T) {
+	root := filepath.Join("..", "..", "..", ".tmp", "explain-analysis")
+	current, err := os.ReadFile(filepath.Join(root, "current.sql"))
+	require.NoError(t, err)
+	joins, err := os.ReadFile(filepath.Join(root, "joins.sql"))
+	require.NoError(t, err)
+	for _, scenario := range []struct {
+		name string
+		sql  string
+	}{
+		{name: "wrong_id", sql: "UPDATE main SET sub_id = 999 WHERE id = 1"},
+		{name: "wrong_kind", sql: "UPDATE main SET sub_obj = 'chairs' WHERE id = 1"},
+		{name: "missing", sql: "DELETE FROM tools WHERE main_id = 1"},
+		{name: "backlink", sql: "UPDATE tools SET main_id = 2 WHERE main_id = 1"},
+		{name: "deleted", sql: "UPDATE tools SET deleted_at = now() WHERE main_id = 1"},
+		{name: "extra", sql: "INSERT INTO tables (id, main_id) VALUES (999, 1)"},
+		{name: "extra_deleted", sql: "INSERT INTO tables (id, main_id, deleted_at) VALUES (999, 1, now())"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			pool := originalSchemaPool(t)
+			seedReadDatabase(t, pool, 9, 32)
+			_, err := pool.Exec(t.Context(), scenario.sql)
+			require.NoError(t, err)
+			for _, query := range []string{string(current), string(joins)} {
+				rows, queryErr := pool.Query(t.Context(), query, int64(1), 100, 0)
+				require.NoError(t, queryErr)
+				values, queryErr := pgx.CollectRows(rows, pgx.RowToMap)
+				require.NoError(t, queryErr)
+				invalid := false
+				for _, value := range values {
+					if value["valid"] == false {
+						invalid = true
+					}
+				}
+				require.True(t, invalid, scenario.name)
+			}
+		})
+	}
+}
+
+func TestExplainLateMaterialization(t *testing.T) {
+	root := filepath.Join("..", "..", "..", ".tmp", "explain-analysis")
+	source, err := os.ReadFile(filepath.Join(root, "current.sql"))
+	require.NoError(t, err)
+	current := string(source)
+	late := strings.Replace(current,
+		"SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at", "SELECT id", 1)
+	late = strings.Replace(late, "FROM page m", "FROM page p JOIN main m ON m.id = p.id", 1)
+	pool := originalSchemaPool(t)
+	seedReadDatabase(t, pool, 1_000_000, 32)
+	connection, err := pool.Acquire(t.Context())
+	require.NoError(t, err)
+	defer connection.Release()
+	var records []map[string]any
+	for _, stage := range []string{"before_manual_vacuum", "after_vacuum", "90pct_deleted_after_vacuum"} {
+		active := 1_000_000
+		if stage != "before_manual_vacuum" {
+			for _, table := range []string{"main", "tools", "tables", "chairs"} {
+				if stage == "90pct_deleted_after_vacuum" {
+					column := "main_id"
+					if table == "main" {
+						column = "id"
+					}
+					_, err = connection.Exec(t.Context(), "UPDATE "+table+
+						" SET deleted_at = '2026-10-01', update_at = '2026-10-01' WHERE "+column+" % 10 <> 0")
+					require.NoError(t, err)
+					active = 100_000
+				}
+				_, err = connection.Exec(t.Context(), "VACUUM (ANALYZE) "+table)
+				require.NoError(t, err)
+			}
+		}
+		for _, page := range []struct {
+			name   string
+			id     any
+			offset int
+		}{
+			{name: "first100"}, {name: "last100", offset: active - 100}, {name: "id_last", id: int64(1_000_000)},
+		} {
+			var expected []map[string]any
+			for _, variant := range []struct{ name, query string }{
+				{name: "current", query: current}, {name: "ids_first", query: late},
+			} {
+				rows, queryErr := connection.Query(t.Context(), variant.query, pgx.QueryExecModeCacheDescribe,
+					page.id, 100, page.offset)
+				require.NoError(t, queryErr)
+				values, queryErr := pgx.CollectRows(rows, pgx.RowToMap)
+				require.NoError(t, queryErr)
+				if variant.name == "current" {
+					expected = values
+				} else {
+					require.Empty(t, cmp.Diff(expected, values))
+				}
+				var (
+					raw   json.RawMessage
+					times []float64
+				)
+				for repeat := range 6 {
+					err = connection.QueryRow(t.Context(),
+						"EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SETTINGS, FORMAT JSON) "+variant.query,
+						pgx.QueryExecModeCacheDescribe, page.id, 100, page.offset).Scan(&raw)
+					require.NoError(t, err)
+					var decoded []struct {
+						ExecutionTime float64 `json:"Execution Time"`
+					}
+					require.NoError(t, json.Unmarshal(raw, &decoded))
+					if repeat > 0 {
+						times = append(times, decoded[0].ExecutionTime)
+					}
+				}
+				slices.Sort(times)
+				records = append(records, map[string]any{
+					"stage": stage, "page": page.name, "variant": variant.name,
+					"median_ms": times[2], "execution_ms": times, "plan": raw,
+				})
+				t.Logf("LATE %s %s %s median=%.3fms", stage, page.name, variant.name, times[2])
+			}
+		}
+	}
+	encoded, err := json.MarshalIndent(records, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "late-materialization.json"), encoded, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "ids-first.sql"), []byte(late), 0600))
+}

@@ -1,0 +1,32 @@
+goarch: amd64
+pkg: github.com/EgorKo25/main-satellite-graphql-api/internal/postgres/integration_tests
+cpu: Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz
+                                            │ docs/analysis/2026-10-08-postgres/integrity-writes.txt │
+                                            │                         sec/op                         │
+IntegrityWrites/constraints_false/create-12                                             1.326m ±  5%
+IntegrityWrites/constraints_false/update-12                                             1.575m ±  5%
+IntegrityWrites/constraints_false/delete-12                                             1.663m ±  8%
+IntegrityWrites/constraints_true/create-12                                              1.710m ± 45%
+IntegrityWrites/constraints_true/update-12                                              1.566m ±  5%
+IntegrityWrites/constraints_true/delete-12                                              1.758m ±  5%
+geomean                                                                                 1.593m
+
+                                            │ docs/analysis/2026-10-08-postgres/integrity-writes.txt │
+                                            │                          B/op                          │
+IntegrityWrites/constraints_false/create-12                                             8.663Ki ± 0%
+IntegrityWrites/constraints_false/update-12                                             10.48Ki ± 0%
+IntegrityWrites/constraints_false/delete-12                                             7.178Ki ± 0%
+IntegrityWrites/constraints_true/create-12                                              8.661Ki ± 0%
+IntegrityWrites/constraints_true/update-12                                              10.48Ki ± 0%
+IntegrityWrites/constraints_true/delete-12                                              7.178Ki ± 0%
+geomean                                                                                 8.670Ki
+
+                                            │ docs/analysis/2026-10-08-postgres/integrity-writes.txt │
+                                            │                       allocs/op                        │
+IntegrityWrites/constraints_false/create-12                                               133.0 ± 0%
+IntegrityWrites/constraints_false/update-12                                               160.0 ± 0%
+IntegrityWrites/constraints_false/delete-12                                               145.0 ± 0%
+IntegrityWrites/constraints_true/create-12                                                133.0 ± 0%
+IntegrityWrites/constraints_true/update-12                                                160.0 ± 0%
+IntegrityWrites/constraints_true/delete-12                                                145.0 ± 0%
+geomean                                                                                   145.6

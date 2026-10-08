@@ -1,0 +1,15 @@
+.git
+.idea
+.codex
+.agents
+.tmp
+AGENTS.md
+config.yaml
+config/config.yaml
+.env
+.env.*
+bin
+coverage*
+*.test
+*.out
+*.exe
