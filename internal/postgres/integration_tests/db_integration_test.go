@@ -66,62 +66,62 @@ func TestMain(tests *testing.M) {
 	os.Exit(exitCode)
 }
 
-func setupDatabase(t *testing.T) (*postgres.DB, *pgxpool.Pool) {
-	t.Helper()
+func setupDatabase(tb testing.TB) (*postgres.DB, *pgxpool.Pool) {
+	tb.Helper()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(tb.Context(), 30*time.Second)
 	defer cancel()
 
 	admin, err := pgx.Connect(ctx, testDatabaseURL)
-	require.NoError(t, err)
-	t.Cleanup(func() {
+	require.NoError(tb, err)
+	tb.Cleanup(func() {
 		cleanupCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
 
-		require.NoError(t, admin.Close(cleanupCtx))
+		require.NoError(tb, admin.Close(cleanupCtx))
 	})
 
 	name := "graphql_ops_" + strings.ToLower(rand.Text())
 	quoted := pgx.Identifier{name}.Sanitize()
 	_, err = admin.Exec(ctx, "CREATE DATABASE "+quoted)
-	require.NoError(t, err)
-	t.Cleanup(func() {
+	require.NoError(tb, err)
+	tb.Cleanup(func() {
 		cleanupCtx, done := context.WithTimeout(context.Background(), 10*time.Second)
 		defer done()
 
 		_, dropErr := admin.Exec(cleanupCtx, "DROP DATABASE "+quoted)
-		require.NoError(t, dropErr, "drop only the database created by this test")
+		require.NoError(tb, dropErr, "drop only the database created by this test")
 	})
 
 	parsed, err := url.Parse(testDatabaseURL)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	parsed.Path = "/" + name
 	testDSN := parsed.String()
 
 	connectionConfig, err := pgx.ParseConfig(testDSN)
-	require.NoError(t, err)
-	require.Equal(t, name, connectionConfig.Database)
+	require.NoError(tb, err)
+	require.Equal(tb, name, connectionConfig.Database)
 
 	migrationDB := stdlib.OpenDB(*connectionConfig)
 
-	t.Cleanup(func() { require.NoError(t, migrationDB.Close()) })
+	tb.Cleanup(func() { require.NoError(tb, migrationDB.Close()) })
 
 	migrations, err := goose.NewProvider(goose.DialectPostgres, migrationDB, os.DirFS("../../../migrations"))
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	_, err = migrations.Up(ctx)
-	require.NoError(t, err)
-	require.NoError(t, migrationDB.Close())
+	require.NoError(tb, err)
+	require.NoError(tb, migrationDB.Close())
 
 	poolConfig, err := pgxpool.ParseConfig(testDSN)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 
 	poolConfig.MaxConns = 2
 	poolConfig.ConnConfig.ConnectTimeout = 5 * time.Second
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	require.NoError(tb, err)
+	tb.Cleanup(pool.Close)
 
 	parsed.User = nil
 	database, err := postgres.New(ctx, config.Database{
@@ -131,8 +131,8 @@ func setupDatabase(t *testing.T) (*postgres.DB, *pgxpool.Pool) {
 		ConnectTimeout: 5 * time.Second,
 		MaxConns:       2,
 	})
-	require.NoError(t, err)
-	t.Cleanup(database.Close)
+	require.NoError(tb, err)
+	tb.Cleanup(database.Close)
 
 	return database, pool
 }

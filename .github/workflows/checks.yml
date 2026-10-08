@@ -56,3 +56,8 @@ jobs:
 
       - name: PostgreSQL integration tests with race detection
         run: go test -race -tags=integration -count=1 ./...
+
+      - name: PostgreSQL read benchmarks
+        run: >-
+          go test -tags=integration ./internal/postgres/integration_tests
+          -run='^$' -bench=BenchmarkReadPostgres -benchmem -benchtime=200ms -count=10 -cpu=1 -timeout=15m
