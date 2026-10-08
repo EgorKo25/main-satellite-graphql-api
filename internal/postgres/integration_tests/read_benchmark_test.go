@@ -135,10 +135,9 @@ func TestReadPaths(t *testing.T) {
 	require.Len(t, items, len(expected))
 
 	for index, main := range items {
-		satellite, decodeErr := decodeReadStandard(main.SubObj, main.SatelliteData)
-		require.NoError(t, decodeErr)
+		satellite := main.Satellite
 
-		main.SatelliteData = nil
+		main.Satellite = nil
 		require.Empty(t, cmp.Diff(expected[index], readResult{Main: main, Satellite: satellite}))
 	}
 }

@@ -80,11 +80,12 @@ func collectColumns(rows pgx.CollectableRow) (readResult, error) {
 func scanJSON(rows pgx.CollectableRow, decode func(domain.Kind, []byte) (domain.SubObject, error)) (readResult, error) {
 	var (
 		main  domain.Main
+		data  json.RawMessage
 		valid bool
 	)
 
 	err := rows.Scan(&main.ID, &main.Title, &main.SubID, &main.SubObj, &main.CreatedAt, &main.UpdatedAt,
-		&main.DeletedAt, &valid, &main.SatelliteData)
+		&main.DeletedAt, &valid, &data)
 	if err != nil {
 		return readResult{}, fmt.Errorf("scan JSON projection: %w", err)
 	}
@@ -93,12 +94,12 @@ func scanJSON(rows pgx.CollectableRow, decode func(domain.Kind, []byte) (domain.
 		return readResult{}, fmt.Errorf("main %d has an inconsistent satellite relationship", main.ID)
 	}
 
-	satellite, err := decode(main.SubObj, main.SatelliteData)
+	satellite, err := decode(main.SubObj, data)
 	if err != nil {
 		return readResult{}, err
 	}
 
-	main.SatelliteData = nil
+	main.Satellite = nil
 
 	return readResult{Main: &main, Satellite: satellite}, nil
 }

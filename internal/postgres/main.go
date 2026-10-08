@@ -8,6 +8,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type mainRow struct {
+	domain.Main
+	satelliteRow
+
+	Valid bool
+}
+
 func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error) {
 	if err := db.validator.Struct(input); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidInput, err)
@@ -22,16 +29,20 @@ func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error)
 	    )
 	    SELECT
 	        m.id, m.title, m.sub_id, m.sub_obj, m.created_at, m.update_at, m.deleted_at,
-	        COALESCE(s.kind = m.sub_obj AND s.id = m.sub_id AND s.deleted_at IS NULL, false), s.data
+	        COALESCE(s.kind = m.sub_obj AND s.id = m.sub_id AND s.deleted_at IS NULL, false) AS valid,
+	        s.id AS satellite_id, s.main_id AS satellite_main_id,
+	        s.created_at AS satellite_created_at, s.update_at AS satellite_updated_at,
+	        s.deleted_at AS satellite_deleted_at, s.description, s.type AS chair_type
 	    FROM page m
 	    LEFT JOIN LATERAL (
-	        SELECT 'tools' AS kind, id, deleted_at, row_to_json(tools) AS data
+	        SELECT 'tools' AS kind, id, main_id, created_at, update_at, deleted_at,
+	            description1 AS description, NULL::text AS type
 	        FROM tools WHERE main_id = m.id
 	        UNION ALL
-	        SELECT 'tables', id, deleted_at, row_to_json(tables)
+	        SELECT 'tables', id, main_id, created_at, update_at, deleted_at, description2, NULL::text
 	        FROM tables WHERE main_id = m.id
 	        UNION ALL
-	        SELECT 'chairs', id, deleted_at, row_to_json(chairs)
+	        SELECT 'chairs', id, main_id, created_at, update_at, deleted_at, description3, type::text
 	        FROM chairs WHERE main_id = m.id
 	    ) s ON true
 	    ORDER BY m.id ASC;
@@ -40,7 +51,20 @@ func (db *DB) List(ctx context.Context, input ListInput) ([]*domain.Main, error)
 		return nil, fmt.Errorf("query Main list: %w", err)
 	}
 
-	result, err := pgx.CollectRows(rows, scanMain)
+	result, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (*domain.Main, error) {
+		item, scanErr := pgx.RowToAddrOfStructByName[mainRow](row)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan Main: %w", scanErr)
+		}
+
+		if !item.Valid {
+			return nil, fmt.Errorf("main %d has an inconsistent satellite relationship", item.ID)
+		}
+
+		item.Satellite = item.object(item.SubObj)
+
+		return &item.Main, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("read Main list: %w", err)
 	}

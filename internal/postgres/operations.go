@@ -62,14 +62,18 @@ func (db *DB) Create(ctx context.Context, title string, satellite map[string]any
 	columns["update_at"] = main.CreatedAt
 
 	query, args, err := squirrel.Insert(string(kind)).SetMap(columns).
-		PlaceholderFormat(squirrel.Dollar).Suffix("RETURNING row_to_json(" + string(kind) + ");").ToSql()
+		PlaceholderFormat(squirrel.Dollar).Suffix("RETURNING " + satelliteColumns(kind) + ";").ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("build satellite insert: %w", err)
 	}
 
-	if err = transaction.QueryRow(ctx, query, args...).Scan(&main.SatelliteData); err != nil {
-		return nil, fmt.Errorf("insert satellite: %w", err)
+	var inserted satelliteRow
+
+	if err = transaction.QueryRow(ctx, query, args...).Scan(&inserted); err != nil {
+		return nil, fmt.Errorf("read inserted satellite: %w", err)
 	}
+
+	main.Satellite = inserted.object(main.SubObj)
 
 	if err = transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create: %w", err)
@@ -135,7 +139,7 @@ func (db *DB) Update(
 	)
 
 	condition := squirrel.Eq{"id": main.SubID, "main_id": main.ID, deletedAtColumn: nil}
-	projection := "row_to_json(" + string(main.SubObj) + ")"
+	projection := satelliteColumns(main.SubObj)
 
 	if fields == nil {
 		query, args, err = squirrel.Select(projection).From(string(main.SubObj)).Where(condition).
@@ -152,9 +156,13 @@ func (db *DB) Update(
 		return nil, fmt.Errorf("build satellite update: %w", err)
 	}
 
-	if err = transaction.QueryRow(ctx, query, args...).Scan(&main.SatelliteData); err != nil {
+	var updated satelliteRow
+
+	if err = transaction.QueryRow(ctx, query, args...).Scan(&updated); err != nil {
 		return nil, fmt.Errorf("read updated satellite: %w", err)
 	}
+
+	main.Satellite = updated.object(main.SubObj)
 
 	if err = transaction.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update: %w", err)
