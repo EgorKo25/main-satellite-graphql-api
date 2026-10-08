@@ -179,19 +179,33 @@ func TestOneOfAllContainersLiteralsAndVariables(t *testing.T) {
 	}
 }
 
-func TestOneOfValidationBeforeAnyMutationAlias(t *testing.T) {
+func TestInvalidVariablesBeforeAnyMutationAlias(t *testing.T) {
 	t.Parallel()
-	controller := gomock.NewController(t)
-	reader := NewMockMainReader(controller)
-	writer := NewMockMainWriter(controller)
-	result := requestGraphQL(t, NewHandler(reader, writer), `mutation($bad:MainMutationInput!){
+
+	for _, test := range []struct {
+		name, input string
+	}{
+		{name: "root extra null", input: `{"delete":{"id":"1"},"create":null}`},
+		{name: "nested extra null", input: `{"create":{"title":"x","satellite":{"tool":{},"table":null}}}`},
+		{name: "uppercase enum", input: `{"create":{"title":"x","satellite":{"chair":{"type":"ABC"}}}}`},
+		{name: "unknown field", input: `{"create":{"title":"x","__typename":"MainCreateInput","satellite":{"tool":{}}}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			controller := gomock.NewController(t)
+			reader := NewMockMainReader(controller)
+			writer := NewMockMainWriter(controller)
+			result := requestGraphQL(t, NewHandler(reader, writer), `mutation($bad:MainMutationInput!){
 		first:main(input:{create:{title:"first",satellite:{tool:{}}}}){main{id}}
 		second:main(input:$bad){deletedId}
-	}`, map[string]any{"bad": map[string]any{"delete": map[string]any{"id": "1"}, "create": nil}})
-	require.NotEmpty(t, result.Errors)
+	}`, map[string]any{"bad": jsonObject(t, test.input)})
+			require.NotEmpty(t, result.Errors)
 
-	for _, err := range result.Errors {
-		require.NotEqual(t, internalServerError, err.Extensions["code"])
+			for _, err := range result.Errors {
+				require.NotEqual(t, internalServerError, err.Extensions["code"])
+			}
+		})
 	}
 }
 
@@ -483,6 +497,10 @@ func TestDatabaseErrorsArePresented(t *testing.T) {
 		{name: "not found", code: "NOT_FOUND", err: postgres.ErrNotFound},
 		{name: "already deleted", code: "ALREADY_DELETED", err: postgres.ErrAlreadyDeleted},
 		{name: "satellite mismatch", code: "SATELLITE_TYPE_MISMATCH", err: postgres.ErrSatelliteTypeMismatch},
+		{
+			name: "joined categories preserve priority", code: badUserInput,
+			err: errors.Join(postgres.ErrNotFound, postgres.ErrInvalidInput),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -2,8 +2,6 @@ package graph
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -12,7 +10,6 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/generated"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/logger"
-	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 )
@@ -58,7 +55,7 @@ func NewHandler(reader mainReader, writer mainWriter) http.Handler {
 
 		return next(ctx)
 	})
-	server.AroundFields(presentResolverErrors())
+	server.AroundFields(presentResolverErrors)
 	server.SetRecoverFunc(func(_ context.Context, recovered any) error {
 		log.Error("panic while executing GraphQL request", nil, logger.Any("panic", recovered))
 
@@ -72,92 +69,4 @@ func NewHandler(reader mainReader, writer mainWriter) http.Handler {
 		request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
 		server.ServeHTTP(writer, request)
 	})
-}
-
-func presentResolverErrors() graphql.FieldMiddleware {
-	log := logger.Get("graphql")
-
-	return func(ctx context.Context, next graphql.Resolver) (any, error) {
-		result, err := next(ctx)
-		if err == nil {
-			return result, nil
-		}
-
-		var (
-			code    = internalServerError
-			message = "internal server error"
-		)
-
-		switch {
-		case errors.Is(err, postgres.ErrInvalidInput):
-			code, message = badUserInput, "invalid input"
-		case errors.Is(err, postgres.ErrNotFound):
-			code, message = "NOT_FOUND", "Main was not found"
-		case errors.Is(err, postgres.ErrAlreadyDeleted):
-			code, message = "ALREADY_DELETED", "Main is already deleted"
-		case errors.Is(err, postgres.ErrSatelliteTypeMismatch):
-			code, message = "SATELLITE_TYPE_MISMATCH", "satellite type cannot be changed"
-		default:
-			log.Error("GraphQL operation failed", err)
-		}
-
-		presented := graphql.DefaultErrorPresenter(ctx, err)
-		presented.Message = message
-		presented.Extensions = map[string]any{codeExtension: code}
-
-		return result, presented
-	}
-}
-
-func validateVariable(schema *ast.Schema, typ *ast.Type, value any) error {
-	if value == nil {
-		return nil
-	}
-
-	definition := schema.Types[typ.NamedType]
-	if definition == nil {
-		return nil
-	}
-
-	switch definition.Kind {
-	case ast.Enum:
-		name, ok := value.(string)
-		if !ok || definition.EnumValues.ForName(name) == nil {
-			return fmt.Errorf("invalid value for enum %s", definition.Name)
-		}
-	case ast.InputObject:
-		fields, ok := value.(map[string]any)
-		if ok {
-			return validateInputVariable(schema, definition, fields)
-		}
-	}
-
-	return nil
-}
-
-func validateInputVariable(schema *ast.Schema, definition *ast.Definition, fields map[string]any) error {
-	if definition.Directives.ForName("oneOf") != nil {
-		if len(fields) != 1 {
-			return fmt.Errorf("%s requires exactly one supplied, non-null field", definition.Name)
-		}
-
-		for _, selected := range fields {
-			if selected == nil {
-				return fmt.Errorf("%s requires exactly one supplied, non-null field", definition.Name)
-			}
-		}
-	}
-
-	for name, item := range fields {
-		field := definition.Fields.ForName(name)
-		if field == nil {
-			return fmt.Errorf("unknown field %s in %s", name, definition.Name)
-		}
-
-		if err := validateVariable(schema, field.Type, item); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
