@@ -280,6 +280,40 @@ func TestWritePreservesInputMaps(t *testing.T) {
 	require.Equal(t, domain.CDE, chair.Type)
 }
 
+func TestCreateRejectsInvalidSatellite(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		satellite map[string]any
+	}{
+		{name: "absent"},
+		{name: "empty", satellite: map[string]any{}},
+		{name: "unknown kind", satellite: map[string]any{"unknown": map[string]any{}}},
+		{name: "null", satellite: map[string]any{toolName: nil}},
+		{name: "typed nil", satellite: map[string]any{toolName: map[string]any(nil)}},
+		{name: "wrong shape", satellite: map[string]any{toolName: "invalid"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			database, pool := setupDatabase(t)
+			created, err := database.Create(t.Context(), initialTitle, test.satellite)
+			require.ErrorIs(t, err, postgres.ErrInvalidInput)
+			require.Nil(t, created)
+
+			var count int64
+
+			err = pool.QueryRow(t.Context(), `
+			    SELECT (SELECT count(*) FROM main) + (SELECT count(*) FROM tools)
+			        + (SELECT count(*) FROM tables) + (SELECT count(*) FROM chairs);
+			`).Scan(&count)
+			require.NoError(t, err)
+			require.Zero(t, count)
+		})
+	}
+}
+
 func TestUpdateFailurePreservesWholeAggregate(t *testing.T) {
 	t.Parallel()
 
@@ -329,6 +363,30 @@ func TestUpdateFailurePreservesWholeAggregate(t *testing.T) {
 			name:      "empty satellite selection with changed title",
 			title:     graphql.OmittableOf(new(changedTitle)),
 			satellite: graphql.OmittableOf(map[string]any{}),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name:      "unknown satellite selection with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{"unknown": map[string]any{}}),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name:      "null selected satellite with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{chairName: nil}),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name:      "typed nil selected satellite with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{chairName: map[string]any(nil)}),
+			want:      postgres.ErrInvalidInput,
+		},
+		{
+			name:      "wrong selected satellite shape with changed title",
+			title:     graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(map[string]any{chairName: "invalid"}),
 			want:      postgres.ErrInvalidInput,
 		},
 		{

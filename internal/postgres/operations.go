@@ -24,15 +24,25 @@ var satelliteKinds = map[string]domain.Kind{
 }
 
 func (db *DB) Create(ctx context.Context, title string, satellite map[string]any) (*domain.Main, error) {
-	kind, fields, err := satelliteInput(satellite)
-	if err != nil {
-		return nil, err
+	branch, known := lo.FindKeyBy(satelliteKinds, func(branch string, _ domain.Kind) bool {
+		return lo.HasKey(satellite, branch)
+	})
+	if !known {
+		return nil, fmt.Errorf("%w: satellite requires a known type", ErrInvalidInput)
 	}
+
+	fields, valid := satellite[branch].(map[string]any)
+	if !valid || fields == nil {
+		return nil, fmt.Errorf("%w: satellite cannot be null", ErrInvalidInput)
+	}
+
+	kind := satelliteKinds[branch]
 
 	transaction, err := db.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return nil, fmt.Errorf("begin create: %w", err)
 	}
+
 	defer func() {
 		if err := transaction.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			logger.Get("postgres").Error("rollback failed", err)

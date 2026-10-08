@@ -6,6 +6,7 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
+	"github.com/samber/lo"
 )
 
 var (
@@ -19,24 +20,6 @@ type ListInput struct {
 	ID     *int64
 	Limit  int `validate:"gte=1,lte=100"`
 	Offset int `validate:"gte=0"`
-}
-
-func satelliteInput(satellite map[string]any) (domain.Kind, map[string]any, error) {
-	for branch, value := range satellite {
-		kind, known := satelliteKinds[branch]
-		if !known {
-			return "", nil, fmt.Errorf("%w: unknown satellite kind %q", ErrInvalidInput, branch)
-		}
-
-		fields, valid := value.(map[string]any)
-		if !valid || fields == nil {
-			return "", nil, fmt.Errorf("%w: satellite cannot be null", ErrInvalidInput)
-		}
-
-		return kind, fields, nil
-	}
-
-	return "", nil, fmt.Errorf("%w: satellite requires one selected type", ErrInvalidInput)
 }
 
 func updateInput(
@@ -55,9 +38,16 @@ func updateInput(
 		return "", nil, nil
 	}
 
-	kind, fields, err := satelliteInput(satellite.Value())
-	if err != nil {
-		return "", nil, err
+	branch, known := lo.FindKeyBy(satelliteKinds, func(branch string, _ domain.Kind) bool {
+		return lo.HasKey(satellite.Value(), branch)
+	})
+	if !known {
+		return "", nil, fmt.Errorf("%w: satellite requires a known type", ErrInvalidInput)
+	}
+
+	fields, valid := satellite.Value()[branch].(map[string]any)
+	if !valid || fields == nil {
+		return "", nil, fmt.Errorf("%w: satellite cannot be null", ErrInvalidInput)
 	}
 
 	if len(fields) == 0 {
@@ -71,5 +61,5 @@ func updateInput(
 		}
 	}
 
-	return kind, fields, nil
+	return satelliteKinds[branch], fields, nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/generated"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/model"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
+	"github.com/samber/lo"
 )
 
 func (r *Resolver) Mutation() generated.MutationResolver {
@@ -22,34 +23,30 @@ func (r *mutationResolver) Main(
 	ctx context.Context,
 	input model.MainMutationInput,
 ) (*model.MainMutationPayload, error) {
-	var (
-		main *domain.Main
-		err  error
-	)
+	payload, err := lo.Switch[bool, lo.Tuple2[*model.MainMutationPayload, error]](true).
+		CaseF(input.Create.IsSet(), func() lo.Tuple2[*model.MainMutationPayload, error] {
+			create := input.Create.Value()
+			main, createErr := r.database.Create(ctx, create.Title, create.Satellite)
 
-	switch {
-	case input.Create.IsSet():
-		create := input.Create.Value()
-		main, err = r.database.Create(ctx, create.Title, create.Satellite)
-	case input.Update.IsSet():
-		update := input.Update.Value()
-		main, err = r.database.Update(ctx, update.ID, update.Title, update.Satellite)
-	case input.Delete.IsSet():
-		id := input.Delete.Value().ID
-		if err = r.database.Delete(ctx, id); err != nil {
-			return nil, fmt.Errorf("delete Main: %w", err)
-		}
+			return lo.T2(&model.MainMutationPayload{Main: main}, createErr)
+		}).
+		CaseF(input.Update.IsSet(), func() lo.Tuple2[*model.MainMutationPayload, error] {
+			update := input.Update.Value()
+			main, updateErr := r.database.Update(ctx, update.ID, update.Title, update.Satellite)
 
-		return &model.MainMutationPayload{DeletedID: &id}, nil
-	default:
-		return nil, fmt.Errorf("%w: mutation requires one selected operation", postgres.ErrInvalidInput)
-	}
+			return lo.T2(&model.MainMutationPayload{Main: main}, updateErr)
+		}).
+		CaseF(input.Delete.IsSet(), func() lo.Tuple2[*model.MainMutationPayload, error] {
+			id := input.Delete.Value().ID
 
+			return lo.T2(&model.MainMutationPayload{DeletedID: &id}, r.database.Delete(ctx, id))
+		}).
+		Default(lo.T2[*model.MainMutationPayload](nil, postgres.ErrInvalidInput)).Unpack()
 	if err != nil {
 		return nil, fmt.Errorf("mutate Main: %w", err)
 	}
 
-	return &model.MainMutationPayload{Main: main}, nil
+	return payload, nil
 }
 
 func (r *Resolver) Query() generated.QueryResolver { return &queryResolver{database: r.reader} }
