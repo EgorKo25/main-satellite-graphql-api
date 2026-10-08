@@ -50,7 +50,9 @@ func TestSatelliteProjection(t *testing.T) {
 					"update_at":"2026-09-16T00:00:00.000001-04:00","deleted_at":null,
 					%q:%s%s
 				}`, typ.field, description.value, typ.extra)
-				main := &domain.Main{ID: 1, SubObj: typ.kind, SatelliteData: json.RawMessage(data)}
+				main := sampleMain(t, typ.kind)
+				main.ID = 1
+				require.NoError(t, json.Unmarshal([]byte(data), &main.Satellite))
 				reader.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return([]*domain.Main{main}, nil)
 
 				selection := fmt.Sprintf(`{
@@ -71,43 +73,11 @@ func TestSatelliteProjection(t *testing.T) {
 					%q:%s%s
 				}`, typ.typename, typ.field, description.value, typ.extra)
 				require.JSONEq(t, `[{"id":"1","first":`+want+`,"second":`+want+`}]`, string(result.Data["main"]))
-				require.JSONEq(t, data, string(main.SatelliteData))
+
+				serialized, err := json.Marshal(main.Satellite)
+				require.NoError(t, err)
+				require.JSONEq(t, data, string(serialized))
 			})
 		}
-	}
-}
-
-func TestSatelliteProjectionErrors(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		kind domain.Kind
-		data string
-	}{
-		{name: "unknown kind", kind: "unknown", data: `{}`},
-		{name: "missing JSON", kind: domain.Tools},
-		{name: "null JSON", kind: domain.Tools, data: jsonNull},
-		{name: "invalid JSON", kind: domain.Tools, data: `{`},
-		{name: "array", kind: domain.Tables, data: `[]`},
-		{name: "overflow", kind: domain.Tools, data: `{"id":9223372036854775808}`},
-		{name: "invalid timestamp", kind: domain.Chairs, data: `{"created_at":"invalid"}`},
-		{name: "wrong field type", kind: domain.Chairs, data: `{"description3":42}`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			controller := gomock.NewController(t)
-			reader := NewMockMainReader(controller)
-			writer := NewMockMainWriter(controller)
-			main := &domain.Main{ID: 1, SubObj: test.kind, SatelliteData: json.RawMessage(test.data)}
-			reader.EXPECT().List(gomock.Any(), postgres.ListInput{Limit: 20}).Return([]*domain.Main{main}, nil)
-			result := requestGraphQL(t, NewHandler(reader, writer), `{ main { satellite { __typename } } }`, nil)
-			require.Len(t, result.Errors, 1)
-			require.Equal(t, internalServerError, result.Errors[0].Extensions[codeExtension])
-			require.Equal(t, "internal server error", result.Errors[0].Message)
-			require.Empty(t, result.Data)
-		})
 	}
 }

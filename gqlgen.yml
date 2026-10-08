@@ -23,9 +23,6 @@ models:
     model: github.com/EgorKo25/main-satellite-graphql-api/internal/graph/scalar.Time
   Main:
     model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.Main
-    fields:
-      satellite:
-        resolver: true
   Tool:
     model: github.com/EgorKo25/main-satellite-graphql-api/internal/domain.Tool
   Table:

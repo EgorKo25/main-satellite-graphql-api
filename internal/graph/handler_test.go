@@ -53,11 +53,8 @@ func sampleMain(t *testing.T, kind domain.Kind) *domain.Main {
 		satellite = &domain.Chair{Satellite: common, Type: domain.ABC}
 	}
 
-	data, err := json.Marshal(satellite)
-	require.NoError(t, err)
-
 	return &domain.Main{ID: 9223372036854775807, Title: "sample", SubID: 2, SubObj: kind,
-		CreatedAt: timestamp, UpdatedAt: timestamp, SatelliteData: data}
+		CreatedAt: timestamp, UpdatedAt: timestamp, Satellite: satellite}
 }
 
 type httpResult struct {

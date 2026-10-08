@@ -1,9 +1,6 @@
 package domain
 
-import (
-	"encoding/json"
-	"time"
-)
+import "time"
 
 type Kind string
 
@@ -21,14 +18,14 @@ const (
 )
 
 type Main struct {
-	ID            int64
-	Title         string
-	SubID         int64
-	SubObj        Kind
-	SatelliteData json.RawMessage `db:"-"`
-	CreatedAt     time.Time
-	UpdatedAt     time.Time `db:"update_at"`
-	DeletedAt     *time.Time
+	ID        int64
+	Title     string
+	SubID     int64
+	SubObj    Kind
+	Satellite SubObject `db:"-"`
+	CreatedAt time.Time
+	UpdatedAt time.Time `db:"update_at"`
+	DeletedAt *time.Time
 }
 
 type SubObject interface {

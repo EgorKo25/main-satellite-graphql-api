@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/domain"
@@ -10,28 +9,6 @@ import (
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/graph/model"
 	"github.com/EgorKo25/main-satellite-graphql-api/internal/postgres"
 )
-
-func (r *Resolver) Main() generated.MainResolver { return &mainResolver{} }
-
-type mainResolver struct{}
-
-func (r *mainResolver) Satellite(_ context.Context, obj *domain.Main) (domain.SubObject, error) {
-	factory, ok := satelliteTypes[obj.SubObj]
-	if !ok {
-		return nil, fmt.Errorf("unknown satellite kind %q", obj.SubObj)
-	}
-
-	satellite := factory()
-	if err := json.Unmarshal(obj.SatelliteData, &satellite); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", obj.SubObj, err)
-	}
-
-	if satellite == nil {
-		return nil, fmt.Errorf("main %d has no satellite data", obj.ID)
-	}
-
-	return satellite, nil
-}
 
 func (r *Resolver) Mutation() generated.MutationResolver {
 	return &mutationResolver{database: r.writer}
