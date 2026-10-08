@@ -88,15 +88,15 @@ func TestWriteQueryCount(t *testing.T) {
 		calls     int64
 	}{
 		{
-			operation: "create",
+			operation: createOperation,
 			input: map[string]any{
 				"title":     "counted",
 				"satellite": map[string]any{chairName: map[string]any{chairTypeField: domain.ABC}},
 			},
-			calls: 4,
+			calls: 8,
 		},
 		{
-			operation: "update",
+			operation: updateOperation,
 			input: map[string]any{
 				"title": "updated",
 				"satellite": map[string]any{chairName: map[string]any{
@@ -106,7 +106,7 @@ func TestWriteQueryCount(t *testing.T) {
 			},
 			calls: 5,
 		},
-		{operation: "delete", input: map[string]any{}, calls: 5},
+		{operation: deleteOperation, input: map[string]any{}, calls: 9},
 	} {
 		t.Run(test.operation, func(t *testing.T) {
 			t.Parallel()
@@ -116,7 +116,7 @@ func TestWriteQueryCount(t *testing.T) {
 
 			var mainID string
 
-			if test.operation != "create" {
+			if test.operation != createOperation {
 				created, err := database.Create(t.Context(), "existing",
 					map[string]any{chairName: map[string]any{chairTypeField: domain.ABC}})
 				require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestWriteQueryCount(t *testing.T) {
 			require.NotNil(t, response.Data.Main)
 			require.Equal(t, test.calls, callsAfter-callsBefore)
 
-			if test.operation == "delete" {
+			if test.operation == deleteOperation {
 				require.Nil(t, response.Data.Main.Main)
 				require.Equal(t, new(mainID), response.Data.Main.DeletedID)
 			} else {

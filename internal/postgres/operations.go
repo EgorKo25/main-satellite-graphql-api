@@ -230,24 +230,13 @@ func (db *DB) Delete(ctx context.Context, mainID int64) error {
 }
 
 func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*domain.Main, error) {
-	var (
-		main           domain.Main
-		satelliteCount int
-	)
+	var main domain.Main
 
 	err := transaction.QueryRow(ctx, `
-	    WITH locked AS (
-	        SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
-	        FROM main WHERE id = $1 FOR UPDATE
-	    )
-	    SELECT locked.*,
-	        (EXISTS (SELECT 1 FROM tools WHERE main_id = locked.id))::integer +
-	        (EXISTS (SELECT 1 FROM tables WHERE main_id = locked.id))::integer +
-	        (EXISTS (SELECT 1 FROM chairs WHERE main_id = locked.id))::integer
-	    FROM locked;
+	    SELECT id, title, sub_id, sub_obj, created_at, update_at, deleted_at
+	    FROM main WHERE id = $1 FOR UPDATE;
 	`, mainID).Scan(
 		&main.ID, &main.Title, &main.SubID, &main.SubObj, &main.CreatedAt, &main.UpdatedAt, &main.DeletedAt,
-		&satelliteCount,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -255,10 +244,6 @@ func (db *DB) lockMain(ctx context.Context, transaction pgx.Tx, mainID int64) (*
 
 	if err != nil {
 		return nil, fmt.Errorf("lock main %d: %w", mainID, err)
-	}
-
-	if satelliteCount != 1 {
-		return nil, fmt.Errorf("main %d must have exactly one satellite, got %d", mainID, satelliteCount)
 	}
 
 	if _, known := lo.FindKey(satelliteKinds, main.SubObj); !known {
