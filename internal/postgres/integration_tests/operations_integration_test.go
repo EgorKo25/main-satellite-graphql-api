@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	toolDescriptionField  = "description1"
 	initialTitle          = "initial"
 	changedTitle          = "changed"
 	toolName              = "tool"
@@ -40,7 +41,7 @@ func TestSatelliteLifecycle(t *testing.T) {
 		{
 			kind:        domain.Tools,
 			name:        toolName,
-			description: "description1",
+			description: toolDescriptionField,
 			create:      map[string]any{toolName: map[string]any{}},
 		},
 		{
@@ -283,10 +284,12 @@ func TestUpdateFailurePreservesWholeAggregate(t *testing.T) {
 		want      error
 	}{
 		{
-			name:      "different satellite kind",
-			title:     graphql.OmittableOf(new(changedTitle)),
-			satellite: graphql.OmittableOf(map[string]any{toolName: map[string]any{"description1": new("different")}}),
-			want:      postgres.ErrSatelliteTypeMismatch,
+			name:  "different satellite kind",
+			title: graphql.OmittableOf(new(changedTitle)),
+			satellite: graphql.OmittableOf(
+				map[string]any{toolName: map[string]any{toolDescriptionField: new("different")}},
+			),
+			want: postgres.ErrSatelliteTypeMismatch,
 		},
 		{
 			name:      "empty satellite patch with changed title",

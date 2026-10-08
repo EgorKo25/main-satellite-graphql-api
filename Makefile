@@ -1,4 +1,4 @@
-.PHONY: build run generate test test-race test-integration test-docker bench vet lint fmt migrate-up migrate-down migrate-status up down
+.PHONY: build run generate test test-race test-integration test-docker bench bench-postgres vet lint fmt migrate-up migrate-down migrate-status up down
 
 build:
 	go build -o bin/api ./cmd/api
@@ -23,6 +23,9 @@ test-docker:
 
 bench:
 	go test ./internal/graph/benchmarks -run='^$$' -bench='Benchmark(Factory|Decode)' -benchmem -benchtime=200ms -count=10 -cpu=1
+
+bench-postgres:
+	go test -tags=integration ./internal/postgres/integration_tests -run='^$$' -bench=BenchmarkReadPostgres -benchmem -benchtime=200ms -count=10 -cpu=1 -timeout=15m
 
 vet:
 	go vet ./...
